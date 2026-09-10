@@ -1,0 +1,3 @@
+import { PieChart,Pie,Cell,ResponsiveContainer,Tooltip } from 'recharts';
+const colors=['#ef6b73','#f59e0b','#55b7c9','#64748b','#a78bfa','#f472b6'];
+export default function AlertChart({data=[]}){return <div className="panel p-4"><h2 className="font-semibold">Alerts by type</h2><div className="mt-4 h-56">{data.length===0?<div className="grid h-full place-items-center text-xs text-muted">No alerts yet</div>:<ResponsiveContainer><PieChart><Pie data={data} dataKey="value" nameKey="name" innerRadius={50} outerRadius={78}>{data.map((_,i)=><Cell key={i} fill={colors[i%colors.length]}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer>}</div></div>}

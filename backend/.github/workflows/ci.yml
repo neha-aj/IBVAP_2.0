@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: test (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: ibvap_common
+            path: libs/ibvap_common
+          - package: auth-service
+            path: services/auth-service
+          - package: camera-service
+            path: services/camera-service
+          - package: ingestion-service
+            path: services/ingestion-service
+          - package: detection-service
+            path: services/detection-service
+            torch_cpu: true
+          - package: tracking-service
+            path: services/tracking-service
+          - package: event-alert-service
+            path: services/event-alert-service
+          - package: media-service
+            path: services/media-service
+          - package: realtime-gateway
+            path: services/realtime-gateway
+          - package: analytics-service
+            path: services/analytics-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ibvap_common is a local path dependency (services/*/pyproject.toml
+      # list it as a bare "ibvap-common" requirement, resolved via
+      # `[tool.uv.sources]` for uv -- pip doesn't understand that section,
+      # so it's installed explicitly first here; once installed, pip's
+      # resolver treats the bare requirement in each service's own
+      # dependencies as already satisfied).
+      - name: Install ibvap_common
+        run: pip install ./libs/ibvap_common
+
+      # detection-service needs the CPU-only torch build (matches its
+      # Dockerfile) -- without pinning this index first, plain `pip install`
+      # would resolve ultralytics' torch dependency against PyPI's default
+      # (CUDA-inclusive, several GB larger) wheel instead.
+      - name: Install CPU-only torch (detection-service only)
+        if: matrix.torch_cpu
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install ${{ matrix.package }}
+        working-directory: ${{ matrix.path }}
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        working-directory: ${{ matrix.path }}
+        run: python -m pytest -q

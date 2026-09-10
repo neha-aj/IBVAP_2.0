@@ -1,0 +1,31 @@
+[project]
+name = "analytics-service"
+version = "0.1.0"
+description = "IBVAP Analytics Service -- scheduled aggregation into materialized views, Dashboard stat aggregate + Analytics page endpoints (SAS §3, §9, DB Spec §5, API Spec §7)"
+requires-python = ">=3.12"
+dependencies = [
+    "ibvap-common",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "redis>=5.0",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "structlog>=24.1",
+]
+
+[tool.uv.sources]
+ibvap-common = { path = "../../libs/ibvap_common" }
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

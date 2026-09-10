@@ -1,0 +1,37 @@
+[project]
+name = "reid-service"
+version = "0.1.0"
+description = "IBVAP Re-ID Service -- person/vehicle cross-camera appearance search (Phase 2 M16/M17, doc09 §2.2/§2.3)"
+requires-python = ">=3.12"
+dependencies = [
+    "ibvap-common",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pgvector>=0.3.0",
+    "redis>=5.0",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.10,<5",
+    "Pillow>=10.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "structlog>=24.1",
+    "prometheus-client>=0.20",
+]
+
+[tool.uv.sources]
+ibvap-common = { path = "../../libs/ibvap_common" }
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "httpx>=0.27"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

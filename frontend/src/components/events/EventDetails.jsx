@@ -1,0 +1,1 @@
+export default function EventDetails(){return <aside className="panel p-4"><p className="eyebrow">Future event inspection</p><div className="mt-3 grid h-36 place-items-center bg-[#071017] text-[10px] tracking-widest text-muted">IMAGE PLACEHOLDER</div></aside>}

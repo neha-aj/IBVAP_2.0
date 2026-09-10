@@ -1,0 +1,486 @@
+version: "3.9"
+
+x-common-env: &common-env
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_HOST: ${POSTGRES_HOST}
+  POSTGRES_PORT: ${POSTGRES_PORT}
+  REDIS_HOST: ${REDIS_HOST}
+  REDIS_PORT: ${REDIS_PORT}
+  JWT_SECRET: ${JWT_SECRET}
+  JWT_ALGORITHM: ${JWT_ALGORITHM}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+  REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS}
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+
+networks:
+  ibvap-internal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  media-data:
+  detection-models:
+  prometheus-data:
+  grafana-data:
+
+services:
+  postgres:
+    # Phase 2 M16 (Person/Vehicle Re-ID) needs the pgvector extension for
+    # embedding similarity search -- this image is postgres:16 with pgvector
+    # compiled in, otherwise identical (same data directory format, same
+    # binary ABI within the major version), so swapping the tag on the
+    # existing volume is safe and doesn't require a data migration.
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: auth-service
+      DB_SCHEMA: auth
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  camera-service:
+    build:
+      context: .
+      dockerfile: services/camera-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: camera-service
+      DB_SCHEMA: camera
+      MEDIA_SERVICE_URL: http://media-service:8000
+      INGESTION_SERVICE_URL: http://ingestion-service:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      media-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ingestion-service:
+    build:
+      context: .
+      dockerfile: services/ingestion-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: ingestion-service
+      CAMERA_SERVICE_URL: http://camera-service:8000
+    volumes:
+      - media-data:/data/media:ro
+    # Uncomment to give the container access to a host webcam (Linux hosts):
+    # devices:
+    #   - /dev/video0:/dev/video0
+    depends_on:
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  detection-service:
+    build:
+      context: .
+      dockerfile: services/detection-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: detection-service
+      CAMERA_SERVICE_URL: http://camera-service:8000
+    volumes:
+      - detection-models:/srv/models
+    depends_on:
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+      ingestion-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # Ultralytics downloads yolov8n.pt on first inference call; give it
+      # room before the healthcheck starts counting failures.
+      start_period: 60s
+
+  tracking-service:
+    build:
+      context: .
+      dockerfile: services/tracking-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: tracking-service
+      CAMERA_SERVICE_URL: http://camera-service:8000
+    depends_on:
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+      detection-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  event-alert-service:
+    build:
+      context: .
+      dockerfile: services/event-alert-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: event-alert-service
+      DB_SCHEMA: events
+      CAMERA_SERVICE_URL: http://camera-service:8000
+      INGESTION_SERVICE_URL: http://ingestion-service:8000
+      MEDIA_SERVICE_URL: http://media-service:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+      tracking-service:
+        condition: service_healthy
+      media-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  anpr-service:
+    build:
+      context: .
+      dockerfile: services/anpr-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: anpr-service
+      DB_SCHEMA: anpr
+      CAMERA_SERVICE_URL: http://camera-service:8000
+      INGESTION_SERVICE_URL: http://ingestion-service:8000
+      MEDIA_SERVICE_URL: http://media-service:8000
+      EVENT_ALERT_SERVICE_URL: http://event-alert-service:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+      detection-service:
+        condition: service_healthy
+      event-alert-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  reid-service:
+    build:
+      context: .
+      dockerfile: services/reid-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: reid-service
+      DB_SCHEMA: reid
+      CAMERA_SERVICE_URL: http://camera-service:8000
+      INGESTION_SERVICE_URL: http://ingestion-service:8000
+      MEDIA_SERVICE_URL: http://media-service:8000
+      EVENT_ALERT_SERVICE_URL: http://event-alert-service:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+      tracking-service:
+        condition: service_healthy
+      media-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  fire-smoke-service:
+    build:
+      context: .
+      dockerfile: services/fire-smoke-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: fire-smoke-service
+      CAMERA_SERVICE_URL: http://camera-service:8000
+      EVENT_ALERT_SERVICE_URL: http://event-alert-service:8000
+    depends_on:
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+      ingestion-service:
+        condition: service_healthy
+      event-alert-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tamper-service:
+    build:
+      context: .
+      dockerfile: services/tamper-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: tamper-service
+      CAMERA_SERVICE_URL: http://camera-service:8000
+      EVENT_ALERT_SERVICE_URL: http://event-alert-service:8000
+    depends_on:
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+      ingestion-service:
+        condition: service_healthy
+      event-alert-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ppe-service:
+    build:
+      context: .
+      dockerfile: services/ppe-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: ppe-service
+      CAMERA_SERVICE_URL: http://camera-service:8000
+      INGESTION_SERVICE_URL: http://ingestion-service:8000
+      EVENT_ALERT_SERVICE_URL: http://event-alert-service:8000
+    depends_on:
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+      ingestion-service:
+        condition: service_healthy
+      tracking-service:
+        condition: service_healthy
+      event-alert-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  media-service:
+    build:
+      context: .
+      dockerfile: services/media-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: media-service
+      DB_SCHEMA: media
+      MEDIA_ROOT: /data/media
+    volumes:
+      - media-data:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  realtime-gateway:
+    build:
+      context: .
+      dockerfile: services/realtime-gateway/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: realtime-gateway
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  analytics-service:
+    build:
+      context: .
+      dockerfile: services/analytics-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: analytics-service
+      DB_SCHEMA: analytics
+      CAMERA_SERVICE_URL: http://camera-service:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Reads across camera/events schemas directly (SAS §3) -- needs their
+      # tables to already exist, so their migrations must have run first.
+      camera-service:
+        condition: service_healthy
+      event-alert-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    environment:
+      - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-http://localhost:5173}
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # conf.d itself is generated at container start by nginx's own
+      # docker-entrypoint (envsubst on every *.template file found here into
+      # /etc/nginx/conf.d) -- this lets CORS_ALLOWED_ORIGIN above reach the
+      # config without hardcoding it, unlike the old direct conf.d:ro mount.
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - media-data:/data/media:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - auth-service
+      - camera-service
+      - ingestion-service
+      - detection-service
+      - tracking-service
+      - event-alert-service
+      - media-service
+      - realtime-gateway
+      - analytics-service
+    networks: [ibvap-internal]
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks: [ibvap-internal]
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks: [ibvap-internal]

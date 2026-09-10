@@ -1,0 +1,2 @@
+import Badge from '../common/Badge';
+export default function RecentAlerts({alerts}){return <section className="panel"><div className="border-b px-4 py-3"><h2 className="font-semibold">Recent Alerts</h2></div><div className="divide-y">{alerts.slice(0,4).map(a=><div className="flex items-center justify-between gap-3 px-4 py-3" key={a.id}><div><p className="font-medium">{a.type}</p><p className="mt-0.5 text-xs text-muted">{a.cameraName} · {a.timestamp}</p></div><Badge tone={a.severity}>{a.severity}</Badge></div>)}</div></section>}

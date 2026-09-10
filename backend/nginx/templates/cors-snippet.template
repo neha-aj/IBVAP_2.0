@@ -1,0 +1,29 @@
+# CORS support for the frontend origin (Phase 2 M11), included from every
+# /api/v1/* location in api-gateway.conf.template. Not included in /ws or
+# /stream/ -- WebSocket/MJPEG connections aren't subject to CORS preflight,
+# and adding `if`-based header blocks there risks interfering with the
+# Upgrade handshake.
+#
+# Reflects the Origin header back only when it matches the configured
+# allow-list (single origin for now) rather than using `*`, per the Phase 2
+# Frontend Integration Spec's explicit guidance -- this still works with the
+# `Authorization: Bearer` header the frontend sends (no cookies involved).
+set $cors_origin "";
+if ($http_origin = "${CORS_ALLOWED_ORIGIN}") {
+    set $cors_origin $http_origin;
+}
+
+add_header 'Access-Control-Allow-Origin' $cors_origin always;
+add_header 'Access-Control-Allow-Credentials' 'true' always;
+add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
+add_header 'Access-Control-Allow-Headers' 'Authorization, Content-Type' always;
+
+if ($request_method = OPTIONS) {
+    add_header 'Access-Control-Allow-Origin' $cors_origin always;
+    add_header 'Access-Control-Allow-Credentials' 'true' always;
+    add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
+    add_header 'Access-Control-Allow-Headers' 'Authorization, Content-Type' always;
+    add_header 'Content-Length' 0;
+    add_header 'Content-Type' 'text/plain';
+    return 204;
+}

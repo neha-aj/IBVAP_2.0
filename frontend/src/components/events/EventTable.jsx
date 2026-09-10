@@ -1,0 +1,6 @@
+import Badge from '../common/Badge';
+// event_type is a stable machine label (analytics reads it directly), so it
+// can't just be renamed to something friendlier -- the description text
+// already carries the human-readable explanation, shown here as a subtitle
+// instead.
+export default function EventTable({events}){return <div className="panel overflow-x-auto"><table className="w-full min-w-[760px] text-left"><thead className="bg-slate-900/40 text-[10px] uppercase tracking-wider text-muted"><tr>{['Time','Camera','Event','Object','Location','Severity','Status'].map(h=><th className="px-4 py-3 font-medium" key={h}>{h}</th>)}</tr></thead><tbody className="divide-y">{events.map(e=><tr key={e.id} className="hover:bg-slate-800/30"><td className="px-4 py-3 text-muted">{new Date(e.time).toLocaleString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</td><td className="px-4 py-3 font-medium">{e.cameraName}</td><td className="px-4 py-3"><div>{e.event}</div>{e.description&&<div className="mt-0.5 text-[10px] font-normal text-muted">{e.description}</div>}</td><td className="px-4 py-3 capitalize">{e.objectType}</td><td className="px-4 py-3 text-muted">{e.location}</td><td className="px-4 py-3"><Badge tone={e.severity}>{e.severity}</Badge></td><td className="px-4 py-3 capitalize text-slate-300">{e.status}</td></tr>)}</tbody></table></div>}

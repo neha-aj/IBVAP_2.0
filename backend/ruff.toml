@@ -1,0 +1,70 @@
+# Phase 2 M24 -- lint enforcement deliberately deferred from Phase 1 M10
+# ("real enforcement needs a proper project-specific config, not an ad hoc
+# one" -- see docs/07-M10-Completion-Summary.md §7). This is that config,
+# built from a real dry-run against the whole repo, not a default preset.
+
+target-version = "py312"
+line-length = 120
+
+[lint]
+# Deliberately not the full "PL" (pylint) category -- rules like
+# too-many-arguments/magic-value-comparison/too-many-branches would
+# require broad refactors across a mature, working codebase to satisfy,
+# not a lint config tuning exercise; that's disproportionate to what this
+# milestone is closing (a scoped-out enforcement gate, not a rewrite).
+# This matches the actual shape of Phase 1 M10's own dry run.
+select = ["E", "F", "W", "I", "UP", "B", "C4", "RUF"]
+ignore = [
+    # No service in this project ships standalone executable scripts --
+    # every file is a module imported by uvicorn/pytest, so a missing
+    # shebang is never actually a problem. (M10's own dry-run found this
+    # was 277 of 520 raw violations -- an irrelevant check for this
+    # codebase's shape, not a real style choice being waived.)
+    "EXE002",
+    # SQLAlchemy's `__table_args__ = {"schema": "..."}` (every model in
+    # this project) and Pydantic's `list[str] = [...]` default fields
+    # (e.g. realtime-gateway's `bridged_channels`) both look like the
+    # mutable-default-sharing bug this rule targets, but aren't one:
+    # SQLAlchemy's metaclass reads `__table_args__` directly (never
+    # mutated per-instance), and Pydantic gives every model instance its
+    # own copy of a list/dict default. Annotating either as `ClassVar`
+    # would be actively wrong for the Pydantic case (it stops being a
+    # model field at all).
+    "RUF012",
+]
+
+# FastAPI's own idiom is `Depends(...)`/`Query(...)`/etc. as a parameter
+# *default* -- B008 ("function-call-in-default-argument") exists to catch
+# a real footgun (a mutable default shared across calls), which doesn't
+# apply here: FastAPI's DI system calls these fresh per-request. This was
+# 185 of M10's 520 raw violations -- allowlisting the specific FastAPI
+# call sites is more precise than disabling B008 entirely, which would
+# also hide a genuine mutable-default bug elsewhere.
+[lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body",
+    "fastapi.File", "fastapi.Form", "fastapi.Header", "fastapi.Cookie", "fastapi.Security",
+    # This project's own dependency-factory idiom (`Depends(require_role
+    # ("viewer"))`, used on nearly every authenticated route) -- returns a
+    # fresh closure per call, no shared mutable state; see its own
+    # docstring ("Dependency factory: Depends(require_role('operator'))").
+    "ibvap_common.auth.require_role",
+]
+
+# Preserves this project's own established import grouping (visible in
+# every service): stdlib, then third-party packages, then `ibvap_common`
+# as its own block (the shared internal library -- installed as a
+# separate pip package, but conceptually distinct from a genuine
+# third-party dependency), then this service's own `app.*` modules.
+# Without this, ruff's default isort would merge `ibvap_common` into the
+# third-party group, flattening a distinction every file in this repo
+# already makes on purpose.
+[lint.isort]
+known-first-party = ["app"]
+section-order = [
+    "future", "standard-library", "third-party", "ibvap-common", "first-party", "local-folder",
+]
+
+[lint.isort.sections]
+"ibvap-common" = ["ibvap_common"]
+

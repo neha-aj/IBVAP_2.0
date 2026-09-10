@@ -1,0 +1,83 @@
+{
+  "title": "IBVAP Overview",
+  "uid": "ibvap-overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP request rate by service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (service) (rate(http_requests_total[1m]))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "HTTP p95 latency by service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "HTTP 5xx rate by service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (service) (rate(http_requests_total{status=~\"5..\"}[1m]))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Pipeline throughput (per camera)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(ingestion_frames_published_total[1m]))",
+          "legendFormat": "frames published"
+        },
+        {
+          "expr": "sum(rate(detection_frames_processed_total[1m]))",
+          "legendFormat": "frames detected"
+        },
+        {
+          "expr": "sum(rate(tracking_detections_processed_total[1m]))",
+          "legendFormat": "detections tracked"
+        },
+        {
+          "expr": "sum(rate(event_alert_track_events_processed_total[1m]))",
+          "legendFormat": "track events evaluated"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Rules fired by type",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (event_type) (rate(event_alert_rules_fired_total[5m]))",
+          "legendFormat": "{{event_type}}"
+        }
+      ]
+    }
+  ]
+}

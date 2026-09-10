@@ -1,0 +1,1 @@
+export default function StatCard({label,value,detail,accent='text-info'}){return <div className="panel p-4"><p className="data-label">{label}</p><div className="mt-3 flex items-end justify-between"><strong className="text-2xl font-semibold text-primary">{value}</strong><span className={`text-xs ${accent}`}>{detail}</span></div></div>}

@@ -1,0 +1,1 @@
+export default function StatusDot({status='online'}){const colors={online:'bg-success',active:'bg-success',offline:'bg-danger',danger:'bg-danger',warning:'bg-warning'};return <span className={`inline-block h-2 w-2 rounded-full ${colors[status]||'bg-muted'}`}/>}

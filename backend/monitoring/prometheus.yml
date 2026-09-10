@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: ibvap-services
+    static_configs:
+      - targets:
+          - auth-service:8000
+          - camera-service:8000
+          - ingestion-service:8000
+          - detection-service:8000
+          - tracking-service:8000
+          - event-alert-service:8000
+          - media-service:8000
+          - realtime-gateway:8000
+          - analytics-service:8000
+          - anpr-service:8000
+          - reid-service:8000
+          - fire-smoke-service:8000
+          - tamper-service:8000
+          - ppe-service:8000
+        labels:
+          project: ibvap

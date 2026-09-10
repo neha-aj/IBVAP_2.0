@@ -1,0 +1,36 @@
+[project]
+name = "tracking-service"
+version = "0.1.0"
+description = "IBVAP Tracking Service -- consumes cam:{id}:detections, runs ByteTrack, assigns/persists track_id, emits track lifecycle events to cam:{id}:tracks (SAS §3, §5.3)"
+requires-python = ">=3.12"
+dependencies = [
+    "ibvap-common",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "redis>=5.0",
+    "httpx>=0.27",
+    "numpy>=1.26",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "structlog>=24.1",
+    "prometheus-client>=0.20",
+    # `sv.ByteTrack` is deprecated as of 0.28.0 (still functional, verified
+    # by this service's own tests) and slated for removal in 0.31.0 with no
+    # named replacement in the deprecation message -- capped below that
+    # until a migration path is confirmed, so a routine rebuild can't
+    # silently break tracking.
+    "supervision>=0.24,<0.31",
+]
+
+[tool.uv.sources]
+ibvap-common = { path = "../../libs/ibvap_common" }
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

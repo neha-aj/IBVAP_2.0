@@ -1,0 +1,315 @@
+server {
+    listen 80;
+    server_name _;
+    client_max_body_size 2G;   # allow large video-file uploads for `file`-type cameras
+
+    # Docker's embedded DNS (127.0.0.11) with a short TTL, plus a variable in
+    # every proxy_pass below, forces nginx to re-resolve each upstream
+    # hostname instead of caching its IP for the container's lifetime. Without
+    # this, recreating any backend container (a redeploy, a `docker compose up`
+    # rebuild, a crash/restart) leaves nginx silently routing to whatever
+    # container now holds the old IP -- observed during testing as auth-service
+    # requests landing on camera-service and returning its 404 instead.
+    resolver 127.0.0.11 valid=10s;
+
+    # M10 hardening: a rate-limited request gets nginx's own rejection
+    # (before ever reaching a service), so it needs its own body to match
+    # the rest of the API's RFC 7807 problem+json convention rather than
+    # nginx's default plain-text/HTML error page.
+    error_page 429 = @rate_limited;
+    location @rate_limited {
+        default_type application/problem+json;
+        return 429 '{"type":"https://ibvap.dev/errors/rate-limited","title":"Too Many Requests","status":429,"detail":"Rate limit exceeded, retry shortly"}';
+    }
+
+    # --- Auth Service (M1) ---
+    # Login gets its own, far stricter zone (brute-force protection) --
+    # this exact-match location takes precedence over the general prefix
+    # location below for this one path regardless of declaration order.
+    location = /api/v1/auth/login {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=auth_login burst=3 nodelay;
+        set $auth_upstream auth-service:8000;
+        proxy_pass http://$auth_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location /api/v1/auth/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $auth_upstream auth-service:8000;
+        proxy_pass http://$auth_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location = /health/auth {
+        set $auth_upstream auth-service:8000;
+        proxy_pass http://$auth_upstream/health;
+    }
+
+    # --- Media Storage Service (M7) ---
+    # API Spec §6 documents `GET /media/{snapshots,recordings}/{id}` under
+    # the bare `/media/` path (no `/api/v1` prefix, unlike every other
+    # service) -- but that collides with serving the actual stored files,
+    # which also live under `/media/snapshots/...` (nginx's static alias,
+    # in place since M2's camera-video-upload feature). Resolved with a
+    # regex location: a UUID-shaped last segment (optionally followed by
+    # `/file`, recordings' byte-serving sub-route) is the API lookup-by-id,
+    # proxied to media-service; everything else (real file paths are
+    # `/media/snapshots/{cameraId}/{date}/{file}.jpg` -- cameraId is never
+    # UUID-shaped) falls through to the static alias below. Regex locations
+    # take precedence over prefix locations regardless of declaration order,
+    # so this is safe however the file below is edited.
+    location ~ "^/media/(snapshots|recordings)/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(/file)?$" {
+        set $media_upstream media-service:8000;
+        proxy_pass http://$media_upstream$request_uri;
+    }
+
+    # M24 security review follow-up: this alias used to be a plain public
+    # static block, meaning anyone who learned or guessed a real file path
+    # (`/media/snapshots/{cameraId}/{date}/{file}.jpg` -- e.g. from an old
+    # denormalized `snapshotUrl`/`recordingUrl`, a Referer header, or the
+    # regex location above resolving one) could fetch the image/clip with
+    # zero auth, regardless of anything the FastAPI layer did. `internal`
+    # makes this location unreachable by any direct client request (nginx
+    # returns 404) -- the only way to reach a file now is via the
+    # `X-Accel-Redirect` response header media-service sets from its own
+    # by-id routes *after* verifying a resource token (`stream_auth.py`),
+    # which nginx resolves against this same location internally.
+    location /media/ {
+        internal;
+        alias /data/media/;
+        autoindex off;
+    }
+
+    location = /health/media {
+        set $media_upstream media-service:8000;
+        proxy_pass http://$media_upstream/health;
+    }
+
+    # --- Camera Management Service (M2) ---
+    location /api/v1/cameras/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $camera_upstream camera-service:8000;
+        proxy_pass http://$camera_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location = /api/v1/cameras {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $camera_upstream camera-service:8000;
+        proxy_pass http://$camera_upstream$request_uri;
+    }
+    location /api/v1/sectors {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $camera_upstream camera-service:8000;
+        proxy_pass http://$camera_upstream$request_uri;
+    }
+    location /api/v1/settings {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $camera_upstream camera-service:8000;
+        proxy_pass http://$camera_upstream$request_uri;
+    }
+    location /api/v1/settings/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $camera_upstream camera-service:8000;
+        proxy_pass http://$camera_upstream$request_uri;
+    }
+
+    location = /health/camera {
+        set $camera_upstream camera-service:8000;
+        proxy_pass http://$camera_upstream/health;
+    }
+
+    # --- Stream Ingestion Service live preview (M3) ---
+    location /stream/ {
+        set $ingestion_upstream ingestion-service:8000;
+        proxy_pass http://$ingestion_upstream$request_uri;
+        proxy_buffering off;               # MJPEG needs to stream, not buffer
+        proxy_set_header Connection "";
+        proxy_http_version 1.1;
+    }
+
+    location = /health/ingestion {
+        set $ingestion_upstream ingestion-service:8000;
+        proxy_pass http://$ingestion_upstream/health;
+    }
+
+    # --- Detection Service (M4) -- no public routes yet (only feeds Redis
+    #     Streams/cache that Camera Management Service's /detections/current
+    #     reads); health check only ---
+    location = /health/detection {
+        set $detection_upstream detection-service:8000;
+        proxy_pass http://$detection_upstream/health;
+    }
+
+    # --- Tracking Service (M5) -- same as Detection: no public routes, it
+    #     only enriches the same /detections/current cache with trackId ---
+    location = /health/tracking {
+        set $tracking_upstream tracking-service:8000;
+        proxy_pass http://$tracking_upstream/health;
+    }
+
+    # --- Event/Alert Service (M6) ---
+    location /api/v1/events {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $event_alert_upstream event-alert-service:8000;
+        proxy_pass http://$event_alert_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location /api/v1/events/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $event_alert_upstream event-alert-service:8000;
+        proxy_pass http://$event_alert_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location /api/v1/alerts {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $event_alert_upstream event-alert-service:8000;
+        proxy_pass http://$event_alert_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location /api/v1/alerts/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $event_alert_upstream event-alert-service:8000;
+        proxy_pass http://$event_alert_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location = /health/event-alert {
+        set $event_alert_upstream event-alert-service:8000;
+        proxy_pass http://$event_alert_upstream/health;
+    }
+
+    # --- ANPR Service (Phase 2 M15) ---
+    location /api/v1/anpr/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $anpr_upstream anpr-service:8000;
+        proxy_pass http://$anpr_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location = /health/anpr {
+        set $anpr_upstream anpr-service:8000;
+        proxy_pass http://$anpr_upstream/health;
+    }
+
+    # --- Re-ID Service (Phase 2 M16) ---
+    location /api/v1/reid/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $reid_upstream reid-service:8000;
+        proxy_pass http://$reid_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location = /health/reid {
+        set $reid_upstream reid-service:8000;
+        proxy_pass http://$reid_upstream/health;
+    }
+
+    # --- Fire & Smoke Detection Service (Phase 2 M19) -- no public routes
+    #     (internal-event-contract only, doc09 §2.6); health check only ---
+    location = /health/fire-smoke {
+        set $fire_smoke_upstream fire-smoke-service:8000;
+        proxy_pass http://$fire_smoke_upstream/health;
+    }
+
+    # --- Camera Tamper Detection Service (Phase 2 M20) -- no public routes
+    #     (internal-event-contract only, doc09 §2.5); health check only ---
+    location = /health/tamper {
+        set $tamper_upstream tamper-service:8000;
+        proxy_pass http://$tamper_upstream/health;
+    }
+
+    # --- PPE Detection Service (Phase 2 M21) -- no public routes
+    #     (internal-event-contract only, doc09 §2.8); health check only ---
+    location = /health/ppe {
+        set $ppe_upstream ppe-service:8000;
+        proxy_pass http://$ppe_upstream/health;
+    }
+
+    # --- Realtime Gateway (M8) -- WebSocket upgrade proxying ---
+    # $connection_upgrade is defined once, http-level, in nginx.conf.
+    # No CORS headers here: the WS handshake isn't subject to CORS
+    # preflight, and `if`-based header blocks would risk interfering with
+    # the Upgrade response.
+    location /ws {
+        set $realtime_upstream realtime-gateway:8000;
+        proxy_pass http://$realtime_upstream$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        # WebSocket connections are long-lived, unlike regular HTTP requests
+        # -- nginx's default 60s read timeout would silently drop an idle-
+        # but-still-subscribed client.
+        proxy_read_timeout 3600s;
+    }
+
+    location /api/v1/system/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $realtime_upstream realtime-gateway:8000;
+        proxy_pass http://$realtime_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location = /health/realtime {
+        set $realtime_upstream realtime-gateway:8000;
+        proxy_pass http://$realtime_upstream/health;
+    }
+
+    # --- Analytics Service (M9) ---
+    location /api/v1/analytics/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $analytics_upstream analytics-service:8000;
+        proxy_pass http://$analytics_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location /api/v1/dashboard/ {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=api_general burst=40 nodelay;
+        set $analytics_upstream analytics-service:8000;
+        proxy_pass http://$analytics_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location = /health/analytics {
+        set $analytics_upstream analytics-service:8000;
+        proxy_pass http://$analytics_upstream/health;
+    }
+}

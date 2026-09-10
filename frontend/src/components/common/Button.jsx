@@ -1,0 +1,1 @@
+export default function Button({children,variant='default',className='',...props}){return <button className={`border rounded-sm px-3 py-2 text-xs font-medium transition-colors ${variant==='default'?'border-info/50 bg-info/10 text-info hover:bg-info/20':'border-line text-secondary hover:bg-panelSecondary hover:text-primary'} ${className}`} {...props}>{children}</button>}

@@ -1,0 +1,1 @@
+export const severityClasses={critical:'bg-danger/15 text-danger border-danger/30',high:'bg-warning/15 text-warning border-warning/30',medium:'bg-warning/10 text-warning border-warning/25',low:'bg-info/10 text-info border-info/30'};

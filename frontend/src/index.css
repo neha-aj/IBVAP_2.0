@@ -1,0 +1,5 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@layer base { * { @apply border-line; } html, body, #root { @apply min-h-screen; } body { @apply m-0 bg-ink text-primary font-sans text-sm antialiased; } button, select { font: inherit; } }
+@layer components { .panel { @apply bg-panel border rounded-md; } .eyebrow { @apply text-[10px] uppercase tracking-[.16em] text-muted font-semibold; } .page-title { @apply text-[22px] font-semibold tracking-tight text-primary; } .page-subtitle { @apply mt-1 text-[13px] text-secondary; } .data-label { @apply text-[11px] uppercase tracking-wider text-muted; } }
