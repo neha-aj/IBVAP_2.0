@@ -13,7 +13,7 @@ router = APIRouter(tags=["preview"])
 _BOUNDARY = "ibvapframe"
 
 
-async def _mjpeg_generator(cache_key: str):
+async def _mjpeg_generator(cache_key: str, *, interval_seconds: float):
     while True:
         jpeg_bytes = await frame_cache.get(cache_key)
         if jpeg_bytes is not None:
@@ -22,7 +22,7 @@ async def _mjpeg_generator(cache_key: str):
                 "Content-Type: image/jpeg\r\n"
                 f"Content-Length: {len(jpeg_bytes)}\r\n\r\n"
             ).encode() + jpeg_bytes + b"\r\n"
-        await asyncio.sleep(0.1)  # ~10fps preview regardless of source fps
+        await asyncio.sleep(interval_seconds)
 
 
 @router.get("/stream/{camera_id}/mjpeg")
@@ -51,6 +51,6 @@ async def mjpeg_stream(
     verify_resource_token(token, resource=camera_id, settings=settings)
     cache_key = camera_id if modality is None else f"{camera_id}:{modality}"
     return StreamingResponse(
-        _mjpeg_generator(cache_key),
+        _mjpeg_generator(cache_key, interval_seconds=1.0 / max(settings.preview_fps, 1)),
         media_type=f"multipart/x-mixed-replace; boundary={_BOUNDARY}",
     )

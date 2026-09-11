@@ -1,6 +1,14 @@
 import { tokenStorage } from "../utils/tokenStorage";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1";
+// "127.0.0.1", not "localhost" -- on this Docker Desktop setup, nginx's
+// published port only ever binds an IPv4 socket, but browsers (and curl)
+// resolve "localhost" to IPv6 (::1) first. That connection gets accepted at
+// the OS/Docker-proxy level (so it doesn't fail fast) but never reaches the
+// container, which black-holes every request until it times out as a
+// generic "Failed to fetch" -- no CORS or backend problem at all. Pin the
+// literal IPv4 address so this can't happen again, regardless of a given
+// machine's IPv6 config.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8080/api/v1";
 
 // A handful of URLs the backend returns (camera stream mjpegUrl) are relative
 // to the gateway's own root, not `/api/v1` -- e.g. `/stream/{id}/mjpeg`. This

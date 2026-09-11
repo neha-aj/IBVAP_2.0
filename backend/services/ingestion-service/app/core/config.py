@@ -14,10 +14,22 @@ class Settings(CommonSettings):
     camera_refresh_interval_seconds: int = 15
 
     # Frames actually decoded/read per camera per second from the source.
-    capture_fps: int = 15
+    # Raised from 15 -- the live-preview tile was visibly capped below this
+    # (see preview_fps below), and 15 was the tighter of the two limits.
+    # Purely a capture/preview-smoothness knob: inference_fps (below) is
+    # unchanged, so this has zero effect on detection/tracking load or
+    # accuracy, only on how often the preview JPEG is refreshed.
+    capture_fps: int = 30
     # Subset of those frames pushed onto the Redis Stream for downstream AI
     # (SAS §5.1: "downsamples to a configurable inference FPS").
     inference_fps: int = 5
+
+    # How often `/stream/{id}/mjpeg` emits a frame to the browser. Was a
+    # hardcoded `asyncio.sleep(0.1)` (~10fps) in preview.py regardless of
+    # `capture_fps` -- the actual bottleneck behind the live-preview tile
+    # looking laggier than the real camera. Matched to capture_fps so the
+    # preview is only ever as fresh as the frames actually being captured.
+    preview_fps: int = 30
 
     # If no frame has been read in this many seconds, the camera is marked offline.
     heartbeat_timeout_seconds: int = 10
@@ -40,11 +52,28 @@ class Settings(CommonSettings):
     frame_stream_maxlen: int = 200
 
     # JPEG quality for both the Redis-published frame and the MJPEG preview.
-    jpeg_quality: int = 70
+    # Raised from 70 for a visibly sharper live-preview image; still well
+    # short of 100 (diminishing returns there mean much larger frames for
+    # barely-visible gain, which would add latency, not remove it).
+    jpeg_quality: int = 85
 
     # For `file`-type cameras: loop back to the start on end-of-stream so a
     # short test clip behaves like a continuous camera feed.
     loop_file_sources: bool = True
+
+    # --- Evidence pre-roll buffer (accident/event recording) ---
+    # How much rolling history `FrameRingBuffer` keeps per camera. Must be
+    # >= event-alert-service's `recording_pre_roll_seconds` (a separate
+    # service/setting) or a pre-roll request would ask for more history
+    # than exists; kept a few seconds above that service's 30s default as
+    # headroom rather than coupling the two settings directly.
+    preroll_buffer_seconds: int = 45
+    # Sampled well below capture_fps -- pre-roll evidence doesn't need full
+    # frame-rate fidelity, and buffering every captured frame for 45s at
+    # capture_fps=30 would be ~1350 full-res JPEGs per camera in memory at
+    # once. 2fps keeps memory bounded (45s * 2 = 90 frames/camera) while
+    # still giving a usable clip.
+    preroll_sample_interval_seconds: float = 0.5
 
 
 @lru_cache

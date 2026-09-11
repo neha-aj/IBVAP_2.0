@@ -18,9 +18,23 @@ def _patch_frame(background: tuple[int, int, int], patch: tuple[int, int, int], 
     return frame
 
 
-def test_fire_score_high_for_solid_fire_colored_region() -> None:
+def test_fire_score_high_for_flickering_fire_colored_region() -> None:
+    """Real flame has internal brightness variation (a bright core fading
+    toward darker edges) -- this patch mimics that with a brighter
+    yellow-orange core inside the wider orange region, not one flat color,
+    so it should clear the variance check alongside the color/RGB one."""
     frame = _patch_frame(background=(80, 80, 80), patch=(0, 100, 255), patch_fraction=0.5)  # BGR orange
+    frame[0:30, 0:30] = (0, 220, 255)  # brighter yellow-orange "core"
     assert fire_score(frame) > 0.15
+
+
+def test_fire_score_zero_for_uniformly_colored_fire_hued_object() -> None:
+    """A solid, uniformly-colored warm object (e.g. a red car) matches the
+    color/RGB rule but has none of flame's internal brightness variation --
+    must not read as fire. Reproduces a real false positive found on this
+    deployment's own camera feed (a red car passing through frame)."""
+    frame = _patch_frame(background=(80, 80, 80), patch=(0, 100, 255), patch_fraction=0.5)  # BGR orange, flat
+    assert fire_score(frame) == 0.0
 
 
 def test_fire_score_zero_for_plain_green_frame() -> None:

@@ -51,6 +51,7 @@ class EventRepository:
         date_to: dt.datetime | None,
         page: int,
         page_size: int,
+        has_recording: bool | None = None,
     ) -> tuple[list[Event], int]:
         stmt = select(Event)
         if camera_id:
@@ -65,6 +66,11 @@ class EventRepository:
             stmt = stmt.where(Event.created_at >= date_from)
         if date_to:
             stmt = stmt.where(Event.created_at <= date_to)
+        # Evidence page: only events with an attached recording clip.
+        if has_recording is True:
+            stmt = stmt.where(Event.recording_id.is_not(None))
+        elif has_recording is False:
+            stmt = stmt.where(Event.recording_id.is_(None))
 
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await self._session.execute(count_stmt)).scalar_one()

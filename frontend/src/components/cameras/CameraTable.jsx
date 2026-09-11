@@ -1,8 +1,10 @@
-import { MoreVertical, Settings2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { MoreVertical, Settings2, MonitorPlay, Pencil, Trash2 } from "lucide-react";
 import Badge from "../common/Badge";
 import StatusDot from "../common/StatusDot";
 
-export default function CameraTable({ cameras, onSelect }) {
+export default function CameraTable({ cameras, onSelect, onEdit, onDelete }) {
   return (
     <section className="panel overflow-hidden">
       <div className="border-b border-line px-4 py-3">
@@ -106,13 +108,7 @@ export default function CameraTable({ cameras, onSelect }) {
                       <Settings2 size={15} />
                     </button>
 
-                    <button
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label={`More options for ${camera.name}`}
-                      className="p-2 text-muted hover:bg-panelSecondary hover:text-primary"
-                    >
-                      <MoreVertical size={15} />
-                    </button>
+                    <RowMenu camera={camera} onEdit={onEdit} onDelete={onDelete} />
                   </div>
                 </td>
               </tr>
@@ -130,5 +126,87 @@ export default function CameraTable({ cameras, onSelect }) {
         </div>
       )}
     </section>
+  );
+}
+
+function RowMenu({ camera, onEdit, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const navigate = useNavigate();
+
+  // Click-anywhere-else closes the menu -- the standard dropdown contract;
+  // without it the menu would only close by re-clicking the trigger.
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((current) => !current);
+        }}
+        aria-label={`More options for ${camera.name}`}
+        aria-expanded={open}
+        className="p-2 text-muted hover:bg-panelSecondary hover:text-primary"
+      >
+        <MoreVertical size={15} />
+      </button>
+
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-0 top-full z-10 mt-1 w-44 border border-line bg-panel shadow-lg"
+        >
+          <MenuItem
+            icon={<MonitorPlay size={13} />}
+            label="View Live Feed"
+            onClick={() => {
+              setOpen(false);
+              navigate(`/surveillance?camera=${camera.id}`);
+            }}
+          />
+
+          <MenuItem
+            icon={<Pencil size={13} />}
+            label="Edit"
+            onClick={() => {
+              setOpen(false);
+              onEdit(camera);
+            }}
+          />
+
+          <MenuItem
+            icon={<Trash2 size={13} />}
+            label="Delete"
+            tone="danger"
+            onClick={() => {
+              setOpen(false);
+              onDelete(camera);
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ icon, label, onClick, tone = "default" }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-panelSecondary ${
+        tone === "danger" ? "text-danger" : "text-secondary hover:text-primary"
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }

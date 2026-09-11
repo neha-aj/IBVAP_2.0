@@ -1,6 +1,8 @@
 import { tokenStorage } from "../utils/tokenStorage";
 
-const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8080/ws";
+// See api.js's BASE_URL comment: "127.0.0.1", not "localhost", to avoid the
+// IPv6 black-hole this Docker Desktop setup hits on "localhost".
+const WS_URL = import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8080/ws";
 const MAX_BACKOFF_MS = 30_000;
 
 // Thin wrapper around the Realtime Gateway's WebSocket contract (API Spec

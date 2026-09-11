@@ -39,7 +39,11 @@ export function useEvents() {
   useEffect(() => {
     socket.subscribe(["events"]);
     const offNew = socket.on("event.new", (event) => {
-      setEvents((current) => [event, ...current].slice(0, MAX_LIVE_EVENTS));
+      // Same duplicate-entry guard as useAlerts.js's "alert.new" handler --
+      // this push can race the initial `eventService.getAll()` load.
+      setEvents((current) =>
+        current.some((e) => e.id === event.id) ? current : [event, ...current].slice(0, MAX_LIVE_EVENTS)
+      );
     });
     return () => {
       offNew();

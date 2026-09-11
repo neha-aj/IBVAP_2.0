@@ -16,6 +16,7 @@ export const cameraService = {
   getCurrentDetections: (id) => api.get(`/cameras/${id}/detections/current`),
   getHealth: (id) => api.get(`/cameras/${id}/health`),
   create: (payload) => api.post("/cameras", payload),
+  delete: (id) => api.delete(`/cameras/${id}`),
   // slot: "rgb" (default) or "thermal" -- only meaningful for a 'dual'
   // camera's second stream (M11); every other camera type just omits it.
   uploadVideo: (id, file, slot) => {

@@ -37,13 +37,21 @@ class Settings(CommonSettings):
     # small compression artifacts or a single stray warm-colored object,
     # not validated against a real adversarial dataset (see heuristics.py's
     # own docstring for the honest accuracy caveat this implies).
-    fire_min_area_fraction: float = 0.02
-    # 0.15, not the fire threshold's 0.02: live-tested against this
-    # deployment's own 3 camera feeds, whose real (harmless) smoke_score
-    # residuals after heuristics.py's texture+sky-band fixes topped out
-    # around 0.035 -- 0.15 keeps a real safety margin above that observed
-    # false-positive floor while staying reachable by genuine large smoke
-    # coverage.
+    #
+    # Raised from 0.02: live-tested against this deployment's own camera
+    # feeds, which produced 36 real false-positive "Fire Detected" alerts
+    # on a red car passing through frame, with reported coverage ranging
+    # 2-7% across every one of them (never higher) -- 0.02 was catching
+    # essentially all of them. 0.15 keeps a real safety margin above that
+    # observed false-positive ceiling (same reasoning and same value as
+    # smoke_min_area_fraction below, which was tuned against its own
+    # observed false-positive residuals the same way).
+    fire_min_area_fraction: float = 0.15
+    # 0.15: live-tested against this deployment's own camera feeds, whose
+    # real (harmless) smoke_score residuals after heuristics.py's texture+
+    # sky-band fixes topped out around 0.035 -- 0.15 keeps a real safety
+    # margin above that observed false-positive floor while staying
+    # reachable by genuine large smoke coverage.
     smoke_min_area_fraction: float = 0.15
 
     # Per-camera-per-class cooldown: doc09 §2.6 says a detection "bypasses

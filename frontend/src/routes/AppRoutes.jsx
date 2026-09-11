@@ -7,6 +7,7 @@ import Surveillance from "../pages/Surveillance";
 import Cameras from "../pages/Cameras";
 import Alerts from "../pages/Alerts";
 import Events from "../pages/Events";
+import Evidence from "../pages/Evidence";
 import Analytics from "../pages/Analytics";
 import LicensePlates from "../pages/LicensePlates";
 import PersonSearch from "../pages/PersonSearch";
@@ -29,6 +30,7 @@ export default function AppRoutes() {
         <Route path="/cameras" element={page(Cameras)} />
         <Route path="/alerts" element={page(Alerts)} />
         <Route path="/events" element={page(Events)} />
+        <Route path="/evidence" element={page(Evidence)} />
         <Route path="/analytics" element={page(Analytics)} />
         <Route path="/anpr" element={page(LicensePlates)} />
         <Route path="/reid" element={page(PersonSearch)} />

@@ -37,6 +37,14 @@ class EventRead(_CamelModel):
     severity: Severity
     status: EventStatus
     description: str | None
+    # Phase 2 M23 -- see Alert's own equivalent field. Optional/settings-gated
+    # for the same reason `to_alert_read` accepts `settings=None`: existing
+    # callers (`pubsub_publisher.py`'s WS `event.new` payload) that only care
+    # about persistence, not a signed playback URL, don't need to construct
+    # a full `Settings` just to get one. Added here (not just EventDetail)
+    # for the evidence/recordings page -- a list view needs to know which
+    # rows even have a clip without a per-row detail round trip.
+    recording_url: str | None = None
 
 
 class EventDetail(EventRead):
@@ -45,7 +53,6 @@ class EventDetail(EventRead):
 
     camera_id: str
     snapshot_url: str | None
-    recording_url: str | None  # Phase 2 M23 -- see Alert's own equivalent field
 
 
 class EventUpdate(_CamelModel):
@@ -59,11 +66,17 @@ class EventListResponse(_CamelModel):
     page_size: int
 
 
-def to_event_read(event: Event) -> EventRead:
+def to_event_read(event: Event, settings: Settings | None = None) -> EventRead:
     """Explicit field-by-field mapping rather than `model_validate(...,
     from_attributes=True)` -- the ORM column is `event_type`, the API field
     is `event` (API Spec §5), so generic attribute-mode validation can't
-    bridge the rename anyway."""
+    bridge the rename anyway.
+
+    `settings` optional (see `EventRead.recording_url`'s own docstring) --
+    `event.recording_url` is a denormalized raw file path (M24 security
+    review follow-up, same issue `to_event_detail` already documents below);
+    only rebuilt as a short-lived signed URL when `settings` is actually
+    given, same pattern as `to_alert_read`."""
     return EventRead(
         id=str(event.id),
         time=event.created_at,
@@ -74,6 +87,11 @@ def to_event_read(event: Event) -> EventRead:
         severity=event.severity,  # type: ignore[arg-type]
         status=event.status,  # type: ignore[arg-type]
         description=event.description,
+        recording_url=build_resource_url(
+            path=f"/media/recordings/{event.recording_id}/file", resource=str(event.recording_id), settings=settings
+        )
+        if event.recording_id and settings
+        else None,
     )
 
 
@@ -87,18 +105,19 @@ def to_event_detail(event: Event, settings: Settings) -> EventDetail:
     each time this event is actually read (a token baked in once at
     capture time could easily have expired by the time anyone views an
     old event)."""
-    base = to_event_read(event)
+    base = to_event_read(event, settings)
     return EventDetail(
-        **base.model_dump(),
+        # recording_url excluded from the spread -- EventRead already
+        # carries it (built above via `base`'s own `settings`), so keeping
+        # it in the spread here would pass it twice (once from `**`, once
+        # explicitly) and error. Re-declared below instead, only for
+        # readability/parity with snapshot_url's own explicit build.
+        **base.model_dump(exclude={"recording_url"}),
         camera_id=event.camera_id,
         snapshot_url=build_resource_url(
             path=f"/media/snapshots/{event.snapshot_id}", resource=str(event.snapshot_id), settings=settings
         )
         if event.snapshot_id
         else None,
-        recording_url=build_resource_url(
-            path=f"/media/recordings/{event.recording_id}/file", resource=str(event.recording_id), settings=settings
-        )
-        if event.recording_id
-        else None,
+        recording_url=base.recording_url,
     )

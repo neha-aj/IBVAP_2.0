@@ -104,6 +104,6 @@ Write-Host "Starting frontend in a new window..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\frontend'; npm run dev"
 
 Write-Host ""
-Write-Host "Backend:  http://localhost:8080" -ForegroundColor Green
+Write-Host "Backend:  http://127.0.0.1:8080" -ForegroundColor Green
 Write-Host "Frontend: http://localhost:5173" -ForegroundColor Green
 Write-Host "Log in with the admin credentials from backend\.env (BOOTSTRAP_ADMIN_USERNAME/PASSWORD)."

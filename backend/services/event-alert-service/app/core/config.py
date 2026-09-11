@@ -84,12 +84,7 @@ class Settings(CommonSettings):
     # --- Recording clip capture (Phase 2 M23) ---
     # Critical-severity events only (doc09/doc08's own "critical-severity
     # recording trigger" concept, never actually wired to a producer until
-    # now -- see media-service's `Recording` model docstring). Ingestion
-    # Service only ever caches a single latest frame per camera (no rolling
-    # buffer), so a true pre-roll clip isn't possible without new buffering
-    # infrastructure -- this captures post-roll only, a documented,
-    # deliberate scope reduction from the full pre/post-roll SAS concept,
-    # same discipline as this project's other honestly-scoped deviations.
+    # M23 -- see media-service's `Recording` model docstring).
     recording_post_roll_frame_count: int = 15
     recording_post_roll_interval_seconds: float = 0.2
     # Playback frame rate of the assembled clip -- frames were captured
@@ -97,6 +92,14 @@ class Settings(CommonSettings):
     # playback speed close to real time.
     recording_clip_fps: float = 5.0
     recording_capture_timeout_seconds: float = 10.0
+    # Accident/event evidence: true pre-roll, now that ingestion-service
+    # keeps a rolling FrameRingBuffer per camera (previously only a single
+    # latest frame was cached, which is why this was post-roll-only -- see
+    # git history/PROGRESS.md for that earlier, honestly-scoped limitation).
+    # Must be <= ingestion-service's own `preroll_buffer_seconds`, a
+    # separate setting on that service -- this is what's actually
+    # *requested*, that's the ceiling on what the buffer *can* hold.
+    recording_pre_roll_seconds: float = 30.0
 
 
 @lru_cache

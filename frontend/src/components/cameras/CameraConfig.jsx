@@ -6,6 +6,7 @@ import {
   Maximize2,
   Radio,
   ShieldCheck,
+  Trash2,
   X,
 } from "lucide-react";
 
@@ -15,6 +16,7 @@ export default function CameraConfig({
   camera,
   onClose,
   onEdit,
+  onDelete,
   onConfigureDetection,
   onConfigureFence,
   onConfigureCalibration,
@@ -135,6 +137,14 @@ export default function CameraConfig({
         >
           <Gauge size={13} />
           Speed Calibration
+        </button>
+
+        <button
+          onClick={onDelete}
+          className="ml-auto flex items-center gap-1.5 border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-semibold text-danger hover:bg-danger/15"
+        >
+          <Trash2 size={13} />
+          Delete Camera
         </button>
       </div>
     </section>

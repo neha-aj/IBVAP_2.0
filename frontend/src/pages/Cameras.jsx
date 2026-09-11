@@ -10,6 +10,7 @@ import VirtualFenceConfig from "../components/cameras/VirtualFenceConfig";
 import CalibrationConfig from "../components/cameras/CalibrationConfig";
 import CameraForm from "../components/cameras/CameraForm";
 import Badge from "../components/common/Badge";
+import ConfirmDialog from "../components/common/ConfirmDialog";
 import { useCameras } from "../hooks/useCameras";
 import { cameraService } from "../services/cameraService";
 
@@ -29,14 +30,12 @@ export default function Cameras() {
   const [showFenceConfig, setShowFenceConfig] = useState(false);
   const [showCalibrationConfig, setShowCalibrationConfig] = useState(false);
 
-  // Local cosmetic overlay for edits -- camera-service does have a real
-  // PUT /cameras/{id}, but wiring it wasn't part of this pass; edits show
-  // immediately here without persisting server-side.
-  const [localEdits, setLocalEdits] = useState({});
-  const displayedCameras = cameras.map((camera) => ({ ...camera, ...localEdits[camera.id] }));
+  const [deleteError, setDeleteError] = useState("");
+  const [cameraPendingDelete, setCameraPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const filteredCameras = useMemo(() => {
-    return displayedCameras.filter((camera) => {
+    return cameras.filter((camera) => {
       const query = search.toLowerCase();
 
       const matchesSearch =
@@ -52,8 +51,7 @@ export default function Cameras() {
 
       return matchesSearch && matchesStatus && matchesSector;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameras, localEdits, search, status, sector]);
+  }, [cameras, search, status, sector]);
 
   function handleAddCamera() {
     setEditingCamera(null);
@@ -67,15 +65,32 @@ export default function Cameras() {
     setShowForm(true);
   }
 
+  async function confirmDeleteCamera() {
+    const camera = cameraPendingDelete;
+    if (!camera) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await cameraService.delete(camera.id);
+      if (selectedCamera?.id === camera.id) setSelectedCamera(null);
+      await refetch();
+      setCameraPendingDelete(null);
+    } catch (err) {
+      setDeleteError(err.detail || err.message || `Failed to delete ${camera.name}.`);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function handleSaveCamera(formData) {
     if (editingCamera) {
-      setLocalEdits((current) => ({
-        ...current,
-        [editingCamera.id]: { name: formData.name, location: formData.location, sector: formData.sector },
-      }));
-      setSelectedCamera((current) =>
-        current ? { ...current, name: formData.name, location: formData.location, sector: formData.sector } : null
-      );
+      const updated = await cameraService.update(editingCamera.id, {
+        name: formData.name,
+        location: formData.location,
+        sector: formData.sector || undefined,
+      });
+      setSelectedCamera((current) => (current?.id === updated.id ? updated : current));
+      await refetch();
     } else {
       // M11: 'thermal'/'dual' are upload-based too (see CameraForm's own
       // UPLOAD_BASED_TYPES comment) -- no sourceUrl sent up front for any
@@ -142,25 +157,40 @@ export default function Cameras() {
 
         <div className="flex items-center gap-2">
           <Badge tone="online">
-            {displayedCameras.filter((c) => c.status === "online").length} Online
+            {cameras.filter((c) => c.status === "online").length} Online
           </Badge>
 
           <Badge tone="warning">
-            {displayedCameras.filter((c) => c.status === "warning").length} Warning
+            {cameras.filter((c) => c.status === "warning").length} Warning
           </Badge>
 
           <Badge tone="offline">
-            {displayedCameras.filter((c) => c.status === "offline").length} Offline
+            {cameras.filter((c) => c.status === "offline").length} Offline
           </Badge>
         </div>
       </div>
+
+      {deleteError && (
+        <p className="mb-3 border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+          {deleteError}
+        </p>
+      )}
 
       {isLoading ? (
         <div className="panel p-10 text-center text-xs text-muted">Loading cameras...</div>
       ) : error ? (
         <div className="panel p-10 text-center text-xs text-danger">Failed to load cameras.</div>
       ) : (
-        <CameraTable cameras={filteredCameras} onSelect={setSelectedCamera} />
+        <CameraTable
+          cameras={filteredCameras}
+          onSelect={setSelectedCamera}
+          onEdit={(camera) => {
+            setSelectedCamera(camera);
+            setEditingCamera(camera);
+            setShowForm(true);
+          }}
+          onDelete={setCameraPendingDelete}
+        />
       )}
 
       {selectedCamera && (
@@ -168,6 +198,7 @@ export default function Cameras() {
             camera={selectedCamera}
             onClose={() => setSelectedCamera(null)}
             onEdit={handleEditCamera}
+            onDelete={() => setCameraPendingDelete(selectedCamera)}
             onConfigureDetection={() => setShowDetectionConfig(true)}
             onConfigureFence={() => setShowFenceConfig(true)}
             onConfigureCalibration={() => setShowCalibrationConfig(true)}
@@ -203,6 +234,17 @@ export default function Cameras() {
             setShowForm(false);
             setEditingCamera(null);
           }}
+        />
+      )}
+
+      {cameraPendingDelete && (
+        <ConfirmDialog
+          open
+          title={`Delete "${cameraPendingDelete.name}"?`}
+          message={`This permanently removes ${cameraPendingDelete.id} and stops its stream. This cannot be undone.`}
+          confirmLabel={deleting ? "Deleting..." : "Delete"}
+          onConfirm={confirmDeleteCamera}
+          onCancel={() => setCameraPendingDelete(null)}
         />
       )}
     </div>

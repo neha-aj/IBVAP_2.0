@@ -1,6 +1,7 @@
 import datetime as dt
 import mimetypes
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import Response
@@ -44,7 +45,14 @@ async def create_recording(
 
     backend = LocalStorageBackend(settings.media_root, url_prefix=settings.media_url_prefix)
     today = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d")
-    url = await backend.save(subdir=f"recordings/{camera_id}/{today}", filename="clip.mp4", data=data)
+    # .webm, not .mp4: event-alert-service's RecordingClient encodes clips as
+    # VP8/WebM (no browser-playable H.264 encoder is available in that
+    # container, and MP4's mp4v fallback isn't supported by any browser's
+    # <video> element -- see recording_client.py's own comment). Storing
+    # under the real extension keeps `mimetypes.guess_type` below correct
+    # for whatever the caller actually uploaded, rather than mislabeling it.
+    extension = Path(file.filename).suffix if file.filename else ".webm"
+    url = await backend.save(subdir=f"recordings/{camera_id}/{today}", filename=f"clip{extension}", data=data)
 
     recording = await MediaRepository(session).create_recording(
         Recording(
@@ -94,6 +102,12 @@ async def get_recording(
 async def get_recording_file(
     recording_id: str,
     token: str | None = Query(default=None),
+    download: bool = Query(
+        default=False,
+        description="Evidence export: adds Content-Disposition: attachment so the "
+        "browser saves the clip instead of playing it inline. Default False preserves "
+        "the existing <video src> inline-playback behavior exactly.",
+    ),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Response:
@@ -113,5 +127,16 @@ async def get_recording_file(
     recording = await MediaRepository(session).get_recording(parsed_id)
     if recording is None:
         raise NotFoundError(f"No recording with id {recording_id}")
-    content_type = mimetypes.guess_type(recording.file_path)[0] or "video/mp4"
-    return Response(status_code=200, media_type=content_type, headers={"X-Accel-Redirect": recording.file_path})
+    content_type = mimetypes.guess_type(recording.file_path)[0] or "video/webm"
+    headers = {"X-Accel-Redirect": recording.file_path}
+    if download:
+        # Evidence export for investigation -- a stable, human-readable
+        # filename (camera + start time) rather than the on-disk "clip.webm"
+        # every recording shares, so multiple exported clips don't collide
+        # or need renaming by hand.
+        stamp = recording.start_time.strftime("%Y%m%d-%H%M%S")
+        extension = content_type.split("/")[-1] or "webm"
+        headers["Content-Disposition"] = (
+            f'attachment; filename="{recording.camera_id}_{stamp}.{extension}"'
+        )
+    return Response(status_code=200, media_type=content_type, headers=headers)

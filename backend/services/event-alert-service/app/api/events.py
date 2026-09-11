@@ -21,9 +21,14 @@ async def list_events(
     severity: str | None = Query(default=None),
     status: str | None = Query(default=None),
     date: str | None = Query(default=None, description="YYYY-MM-DD, filters events created on that date"),
+    has_recording: bool | None = Query(
+        default=None, alias="hasRecording",
+        description="Evidence page: filter to only events with an attached recording clip.",
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200, alias="pageSize"),
     session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     _user: TokenPayload = Depends(require_role("viewer")),
 ) -> EventListResponse:
     date_from = date_to = None
@@ -33,10 +38,10 @@ async def list_events(
 
     rows, total = await EventRepository(session).list_paginated(
         camera_id=camera, event_type=event_type, severity=severity, status=status,
-        date_from=date_from, date_to=date_to, page=page, page_size=page_size,
+        date_from=date_from, date_to=date_to, has_recording=has_recording, page=page, page_size=page_size,
     )
     return EventListResponse(
-        items=[to_event_read(row) for row in rows], total=total, page=page, page_size=page_size
+        items=[to_event_read(row, settings) for row in rows], total=total, page=page, page_size=page_size
     )
 
 

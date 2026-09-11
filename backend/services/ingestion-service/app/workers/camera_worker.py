@@ -20,6 +20,7 @@ from app.capture.base import FrameSource
 from app.capture.factory import build_frame_source
 from app.core.config import Settings
 from app.preview.frame_cache import frame_cache
+from app.preview.frame_ring_buffer import frame_ring_buffer
 from app.streaming.frame_publisher import FramePublisher
 
 logger = get_logger(__name__)
@@ -67,6 +68,10 @@ class CameraWorker:
         self._task: asyncio.Task | None = None
         self._stop_requested = False
         self._reported_status: str | None = None
+        # Evidence pre-roll: throttles FrameRingBuffer.push() to
+        # preroll_sample_interval_seconds regardless of capture_fps -- see
+        # that setting's own docstring for why (bounded memory).
+        self._last_preroll_push_at = 0.0
         # Set at construction (not just inside the capture loop) so a worker
         # that's slow to open isn't immediately misread as stuck by
         # `seconds_since_last_frame` before it's had any chance to read a
@@ -113,6 +118,7 @@ class CameraWorker:
             except asyncio.CancelledError:
                 pass
         await frame_cache.clear(self._cache_key)
+        await frame_ring_buffer.clear(self._cache_key)
 
     def _loop_generation_key(self) -> str:
         # Scoped by source_url (hashed -- it's a filesystem path, not a safe
@@ -180,7 +186,16 @@ class CameraWorker:
                 ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._settings.jpeg_quality]
             )
             if ok:
-                await frame_cache.set(self._cache_key, encoded.tobytes())
+                jpeg_bytes = encoded.tobytes()
+                await frame_cache.set(self._cache_key, jpeg_bytes)
+                # Evidence pre-roll: sampled well below capture_fps (see
+                # preroll_sample_interval_seconds), additive alongside the
+                # frame_cache write above -- doesn't touch the live preview.
+                if now - self._last_preroll_push_at >= self._settings.preroll_sample_interval_seconds:
+                    await frame_ring_buffer.push(
+                        self._cache_key, jpeg_bytes, max_age_seconds=self._settings.preroll_buffer_seconds
+                    )
+                    self._last_preroll_push_at = now
 
             # Downsample to inference_fps for the Redis Stream (SAS §5.2 input).
             if now - last_publish_at >= publish_interval:
