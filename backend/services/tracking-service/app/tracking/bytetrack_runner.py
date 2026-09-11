@@ -24,8 +24,8 @@ from app.schemas.detection import BoundingBox, Detection
 # ByteTrack's own internal class ids -- unrelated to COCO's ids (detection-
 # service's own concern only), just a local 0/1/2 enum for this tracker.
 # "animal": 2 added Phase 2 M21.
-_CLASS_BY_TYPE = {"person": 0, "vehicle": 1, "animal": 2}
-_TYPE_BY_CLASS = {0: "person", 1: "vehicle", 2: "animal"}
+_CLASS_BY_TYPE = {"person": 0, "vehicle": 1, "animal": 2, "bag": 3}
+_TYPE_BY_CLASS = {0: "person", 1: "vehicle", 2: "animal", 3: "bag"}
 
 
 class ByteTrackRunner:

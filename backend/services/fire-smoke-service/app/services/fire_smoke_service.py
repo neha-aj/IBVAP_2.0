@@ -1,8 +1,9 @@
-"""Orchestrates Fire & Smoke Detection (doc09 §2.6): runs both heuristics
-on a sampled frame and reports a detection through the shared internal
-event contract. `fire_score`/`smoke_score` are injected callables (not
-hardcoded to `app.inference.heuristics`) so this orchestration logic is
-unit-testable without real image processing -- same pattern as every
+"""Orchestrates Fire & Smoke Detection (doc09 §2.6), plus a Blood
+Detection heuristic added on the same terms: runs all three heuristics on
+a sampled frame and reports a detection through the shared internal event
+contract. `fire_score`/`smoke_score`/`blood_score` are injected callables
+(not hardcoded to `app.inference.heuristics`) so this orchestration logic
+is unit-testable without real image processing -- same pattern as every
 other Category B service's injectable-inference design this session
 (ANPR's `detect_plate`/`read_plate`, Re-ID's `embed`).
 """
@@ -33,12 +34,14 @@ class FireSmokeService:
         event_client: EventClient,
         fire_score: ScoreFn = heuristics.fire_score,
         smoke_score: ScoreFn = heuristics.smoke_score,
+        blood_score: ScoreFn = heuristics.blood_score,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
         self._settings = settings
         self._event_client = event_client
         self._fire_score = fire_score
         self._smoke_score = smoke_score
+        self._blood_score = blood_score
         self._now = now
         # (camera_id, event_type) -> monotonic time of last alert. Process-
         # local only, same as event-alert-service's own rule-engine
@@ -48,8 +51,8 @@ class FireSmokeService:
 
     async def process_frame(self, camera_id: str, frame: np.ndarray) -> str | None:
         """Returns the event_type that fired ("Fire Detected"/"Smoke
-        Detected"), or None if nothing crossed threshold (or a real hit
-        was suppressed by the per-camera cooldown)."""
+        Detected"/"Blood Detected"), or None if nothing crossed threshold
+        (or a real hit was suppressed by the per-camera cooldown)."""
         fire = self._fire_score(frame)
         if fire >= self._settings.fire_min_area_fraction and await self._maybe_alert(
             camera_id, "Fire Detected", fire
@@ -61,6 +64,12 @@ class FireSmokeService:
             camera_id, "Smoke Detected", smoke
         ):
             return "Smoke Detected"
+
+        blood = self._blood_score(frame)
+        if blood >= self._settings.blood_min_area_fraction and await self._maybe_alert(
+            camera_id, "Blood Detected", blood
+        ):
+            return "Blood Detected"
 
         return None
 

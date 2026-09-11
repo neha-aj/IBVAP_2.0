@@ -10,7 +10,8 @@ from app.schemas.zone_line import ZoneLineCreate, ZoneLineRead, ZoneLineUpdate
 
 def _to_read(line: ZoneLine) -> ZoneLineRead:
     return ZoneLineRead(
-        id=str(line.id), name=line.name, point_a=line.point_a, point_b=line.point_b, direction=line.direction
+        id=str(line.id), name=line.name, point_a=line.point_a, point_b=line.point_b, direction=line.direction,
+        line_type=line.line_type,
     )
 
 
@@ -45,6 +46,7 @@ class ZoneLineService:
                 point_a=data.point_a.model_dump(),
                 point_b=data.point_b.model_dump(),
                 direction=data.direction,
+                line_type=data.line_type,
             )
         )
         return _to_read(line)
@@ -58,6 +60,7 @@ class ZoneLineService:
         point_b = data.point_b.model_dump() if data.point_b is not None else None
         line = await self._lines.update(
             line, name=data.name, point_a=point_a, point_b=point_b, direction=data.direction,
+            line_type=data.line_type,
         )
         return _to_read(line)
 

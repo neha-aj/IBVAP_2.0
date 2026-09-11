@@ -9,9 +9,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-# "animal" added Phase 2 M21 -- see detection-service's own
-# COCO_TYPE_MAP/DetectionType for where this originates.
-DetectionType = Literal["person", "vehicle", "animal"]
+# "animal" added Phase 2 M21; "bag" added for Abandoned Object Detection
+# (behavioral analytics) -- see detection-service's own COCO_TYPE_MAP/
+# DetectionType for where this originates.
+DetectionType = Literal["person", "vehicle", "animal", "bag"]
 
 
 class _CamelModel(BaseModel):

@@ -308,6 +308,29 @@ services:
       timeout: 5s
       retries: 5
 
+  pose-service:
+    build:
+      context: .
+      dockerfile: services/pose-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: pose-service
+      CAMERA_SERVICE_URL: http://camera-service:8000
+    depends_on:
+      redis:
+        condition: service_healthy
+      camera-service:
+        condition: service_healthy
+      ingestion-service:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   tamper-service:
     build:
       context: .

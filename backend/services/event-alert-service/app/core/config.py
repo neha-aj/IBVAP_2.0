@@ -101,6 +101,22 @@ class Settings(CommonSettings):
     # *requested*, that's the ceiling on what the buffer *can* hold.
     recording_pre_roll_seconds: float = 30.0
 
+    # --- Behavioral analytics ---
+    # Fighting Detection: see `rules/fighting.py`'s own docstring for why
+    # this is a proximity+erratic-motion proxy, not real action recognition.
+    # `_proximity_threshold` and displacement units are the same percentage-
+    # of-frame units every other distance check in this file already uses.
+    fighting_proximity_threshold: float = 12.0
+    fighting_jitter_threshold: float = 0.6  # coefficient-of-variation cutoff
+    fighting_min_mean_displacement: float = 1.5  # noise floor -- ignores near-stationary tracker jitter
+    fighting_history_size: int = 6  # ~1-2s of updates at typical tracker rates
+    # Abandoned Object Detection: reuses `loitering_seconds_threshold`'s
+    # dwell-time shape but on its own, longer threshold -- a bag set down
+    # for a minute while its owner ties a shoe isn't abandoned; one still
+    # sitting there 3+ minutes later with nobody nearby is worth a look.
+    abandoned_object_seconds_threshold: int = 180
+    abandoned_object_proximity_threshold: float = 15.0
+
 
 @lru_cache
 def get_settings() -> Settings:

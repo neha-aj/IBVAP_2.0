@@ -12,12 +12,15 @@ engine's own active-count bookkeeping.
 from __future__ import annotations
 
 import datetime as dt
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from app.core.config import Settings
 from app.repositories.track_repo import TrackRepository
-from app.rules import direction, intrusion, line_crossing, loitering, offline_alert, speed, zone_crossing
+from app.rules import (
+    abandoned_object, direction, fighting, intrusion, line_crossing, loitering, offline_alert, speed, zone_crossing,
+)
 from app.schemas.internal import BoundingBox, CameraInfo, Point, TrackEvent, Zone, ZoneLine
 
 ZoneProvider = Callable[[str], Awaitable[list[Zone]]]
@@ -114,12 +117,28 @@ class RuleEngine:
         self._alias: dict[tuple[str, str], str] = {}
         self._last_bbox: dict[tuple[str, str], BoundingBox] = {}
         self._recently_lost: dict[str, list[_LostTrack]] = {}
+        # Behavioral analytics: Fighting Detection needs each *person*
+        # track's last bbox (for pairwise proximity, cheaper than re-scanning
+        # `_last_bbox` and filtering by type) and a short rolling history of
+        # its per-update displacement magnitude (see `rules/fighting.py`).
+        # Abandoned Object Detection reuses the same last-person-bbox map for
+        # its "is anyone still with this bag" check.
+        self._person_last_bbox: dict[tuple[str, str], BoundingBox] = {}
+        self._displacement_history: dict[tuple[str, str], list[float]] = {}
+        self._fighting_fired: set[tuple[str, frozenset[str]]] = set()
+        self._abandoned_fired: set[tuple[str, str]] = set()
 
     async def handle_track_event(
         self, event: TrackEvent, track_repo: TrackRepository, now: dt.datetime
     ) -> list[EventDraft]:
         drafts: list[EventDraft] = []
-        counts = self._active_counts.setdefault(event.camera_id, {"person": set(), "vehicle": set()})
+        # `defaultdict` (not a plain {"person":..., "vehicle":...} literal)
+        # so any object_type -- "animal" (M21), and now "bag" (Abandoned
+        # Object Detection) -- can be counted without a KeyError; only
+        # person/vehicle ever feed `_check_count_threshold` below, so this
+        # is purely a safety net for the others, not a behavior change for
+        # either of those two.
+        counts = self._active_counts.setdefault(event.camera_id, defaultdict(set))
         # Count-threshold rule cares about "how many distinct ByteTrack ids
         # are in frame right now" -- unaffected by loop_generation or the
         # merge heuristic below, both of which only change what gets
@@ -190,6 +209,41 @@ class RuleEngine:
                         )
                     )
 
+                # Abandoned Object Detection (behavioral analytics): its own,
+                # longer dwell threshold than generic Loitering above -- both
+                # can fire for the same bag (Loitering at 30s, this at 180s
+                # by default), which is expected, not a conflict: Loitering
+                # is generic "something's been still a while", this is the
+                # specific "nobody's with this bag" alert. See
+                # `rules/abandoned_object.py`.
+                if (
+                    event.object_type == "bag" and event.bbox is not None and key not in self._abandoned_fired
+                    and loitering.has_exceeded_dwell_time(
+                        track.first_seen, now, threshold_seconds=self._settings.abandoned_object_seconds_threshold
+                    )
+                ):
+                    nearby_people = [
+                        bbox for (cam_id, _ref), bbox in self._person_last_bbox.items() if cam_id == event.camera_id
+                    ]
+                    if abandoned_object.is_unattended(
+                        event.bbox, nearby_people,
+                        proximity_threshold=self._settings.abandoned_object_proximity_threshold,
+                    ):
+                        self._abandoned_fired.add(key)
+                        drafts.append(
+                            EventDraft(
+                                camera_id=event.camera_id,
+                                event_type="Abandoned Object Detected",
+                                object_type="bag",
+                                severity="high",
+                                description=(
+                                    f"Unattended object present for over "
+                                    f"{self._settings.abandoned_object_seconds_threshold}s with no person nearby"
+                                ),
+                                requires_review=True,
+                            )
+                        )
+
         elif event.event == "track.lost":
             counts.get(event.object_type, set()).discard(event.track_id)
             resolved_ref = self._alias.pop((event.camera_id, event.track_id), event.track_id)
@@ -203,6 +257,13 @@ class RuleEngine:
             self._last_centroid_time.pop((event.camera_id, resolved_ref), None)
             self._heading_history.pop((event.camera_id, resolved_ref), None)
             self._direction_last_emitted.pop((event.camera_id, resolved_ref), None)
+            self._person_last_bbox.pop((event.camera_id, resolved_ref), None)
+            self._displacement_history.pop((event.camera_id, resolved_ref), None)
+            self._abandoned_fired.discard((event.camera_id, resolved_ref))
+            self._fighting_fired = {
+                pair_key for pair_key in self._fighting_fired
+                if not (pair_key[0] == event.camera_id and resolved_ref in pair_key[1])
+            }
 
             previous_density_zone_ids = self._track_density_zones.pop((event.camera_id, resolved_ref), None)
             if previous_density_zone_ids:
@@ -269,6 +330,15 @@ class RuleEngine:
                 drafts.extend(await self._check_line_crossing(event, prev, curr))
                 if prev_time is not None:
                     drafts.extend(await self._check_speed_estimation(event, prev, curr, prev_time, now))
+
+            if event.object_type == "person":
+                if prev is not None:
+                    displacement = ((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2) ** 0.5
+                    history = self._displacement_history.setdefault(key, [])
+                    history.append(displacement)
+                    del history[: -self._settings.fighting_history_size]
+                drafts.extend(self._check_fighting(event, resolved_ref, curr))
+                self._person_last_bbox[key] = event.bbox
 
         return drafts
 
@@ -410,14 +480,37 @@ class RuleEngine:
         against every configured line each update, per doc09 §1.2. A line
         with no configured `direction` only ever produces "Line Crossing";
         one with a configured `direction` produces "Wrong-Way Movement"
-        instead whenever the actual crossing direction doesn't match it."""
+        instead whenever the actual crossing direction doesn't match it.
+
+        Fence Climbing Detection (behavioral analytics): a line whose
+        `line_type == "fence"` marks it as a perimeter barrier rather than
+        an ordinary road/lane boundary -- a *person* crossing one reports
+        "Fence Climbing Detected" instead, ahead of the direction check
+        above (a fence's `direction`, if set, still selects Wrong-Way vs.
+        plain crossing semantics for non-person object types, but a person
+        climbing a fence is never a "wrong way," it's the event). Every
+        line with `line_type` unset (every line that existed before this
+        feature) takes the exact same path as before -- nothing here
+        changes for them.
+        """
         lines = await self._zone_line_provider(event.camera_id)
         drafts: list[EventDraft] = []
         for line in lines:
             if not line_crossing.segments_intersect(prev, curr, line.point_a, line.point_b):
                 continue
             crossing_dir = line_crossing.crossing_direction(line.point_a, line.point_b, prev, curr)
-            if line.direction is not None and crossing_dir != line.direction:
+            if line.line_type == "fence" and event.object_type == "person":
+                drafts.append(
+                    EventDraft(
+                        camera_id=event.camera_id,
+                        event_type="Fence Climbing Detected",
+                        object_type=event.object_type,
+                        severity="critical",
+                        description=f"Person crossed fence line '{line.name}' ({crossing_dir})",
+                        requires_review=True,
+                    )
+                )
+            elif line.direction is not None and crossing_dir != line.direction:
                 drafts.append(
                     EventDraft(
                         camera_id=event.camera_id,
@@ -439,6 +532,47 @@ class RuleEngine:
                         requires_review=True,
                     )
                 )
+        return drafts
+
+    def _check_fighting(self, event: TrackEvent, track_ref: str, curr: Point) -> list[EventDraft]:
+        """Fighting Detection (behavioral analytics): checks this
+        just-updated person track against every other currently-tracked
+        person on the same camera -- see `rules/fighting.py`'s own
+        docstring for the proximity+erratic-motion heuristic and its
+        honestly-disclosed limitations. Fires at most once per (camera,
+        pair) per ongoing tracking episode -- like Loitering, a fresh
+        episode starts once either track is lost and reappears."""
+        camera_id = event.camera_id
+        history_a = self._displacement_history.get((camera_id, track_ref), [])
+        drafts: list[EventDraft] = []
+        for (cam_id, other_ref), other_bbox in list(self._person_last_bbox.items()):
+            if cam_id != camera_id or other_ref == track_ref:
+                continue
+            other_center = Point(x=other_bbox.x + other_bbox.width / 2, y=other_bbox.y + other_bbox.height / 2)
+            distance = ((curr.x - other_center.x) ** 2 + (curr.y - other_center.y) ** 2) ** 0.5
+            history_b = self._displacement_history.get((cam_id, other_ref), [])
+            if not fighting.pair_is_fighting(
+                distance, history_a, history_b,
+                proximity_threshold=self._settings.fighting_proximity_threshold,
+                jitter_threshold=self._settings.fighting_jitter_threshold,
+                min_mean_displacement=self._settings.fighting_min_mean_displacement,
+            ):
+                continue
+            pair_key = (camera_id, frozenset({track_ref, other_ref}))
+            if pair_key in self._fighting_fired:
+                continue
+            self._fighting_fired.add(pair_key)
+            drafts.append(
+                EventDraft(
+                    camera_id=camera_id,
+                    event_type="Fighting Detected",
+                    object_type="person",
+                    severity="critical",
+                    description="Two people in close, erratic contact -- possible physical altercation "
+                                "(requires visual confirmation)",
+                    requires_review=True,
+                )
+            )
         return drafts
 
     async def _check_speed_estimation(

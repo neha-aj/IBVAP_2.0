@@ -633,3 +633,163 @@ async def test_queue_zone_cleared_when_track_is_lost() -> None:
 
     await engine.handle_track_event(_track_event("track.lost", "1"), repo, now)
     assert repo.tracks[("CAM-01", "1")].current_queue_zone_id is None
+
+
+# --- Fence Climbing Detection (behavioral analytics) ---
+
+
+@pytest.mark.asyncio
+async def test_fence_climbing_fires_for_person_crossing_a_fence_line() -> None:
+    line = ZoneLine(
+        id="line-1", name="Perimeter", point_a=Point(x=0, y=50), point_b=Point(x=100, y=50), lineType="fence",
+    )
+    engine = RuleEngine(_settings(), _no_zones, _zone_line_provider([line]))
+    repo = FakeTrackRepo()
+    now = dt.datetime.now(dt.UTC)
+
+    await engine.handle_track_event(_track_event("track.started", "1", x=50.0, y=10.0), repo, now)
+    drafts = await engine.handle_track_event(_track_event("track.updated", "1", x=50.0, y=90.0), repo, now)
+    assert any(d.event_type == "Fence Climbing Detected" and d.severity == "critical" for d in drafts)
+    assert not any(d.event_type == "Line Crossing" for d in drafts)
+
+
+@pytest.mark.asyncio
+async def test_fence_line_still_fires_generic_line_crossing_for_a_vehicle() -> None:
+    """Fence Climbing is person-specific -- a vehicle crossing the same
+    line (e.g. a vehicle gate sharing a perimeter line definition) keeps
+    getting the generic Line Crossing event, not a climbing alert."""
+    line = ZoneLine(
+        id="line-1", name="Perimeter", point_a=Point(x=0, y=50), point_b=Point(x=100, y=50), lineType="fence",
+    )
+    engine = RuleEngine(_settings(), _no_zones, _zone_line_provider([line]))
+    repo = FakeTrackRepo()
+    now = dt.datetime.now(dt.UTC)
+
+    await engine.handle_track_event(_track_event("track.started", "1", "vehicle", x=50.0, y=10.0), repo, now)
+    drafts = await engine.handle_track_event(_track_event("track.updated", "1", "vehicle", x=50.0, y=90.0), repo, now)
+    assert any(d.event_type == "Line Crossing" for d in drafts)
+    assert not any(d.event_type == "Fence Climbing Detected" for d in drafts)
+
+
+@pytest.mark.asyncio
+async def test_line_without_line_type_behaves_exactly_as_before() -> None:
+    """A line with no `line_type` set (every line that existed before this
+    feature) must take the exact same path as before -- no behavior change
+    for existing lines."""
+    line = ZoneLine(id="line-1", name="Boundary", point_a=Point(x=0, y=50), point_b=Point(x=100, y=50))
+    engine = RuleEngine(_settings(), _no_zones, _zone_line_provider([line]))
+    repo = FakeTrackRepo()
+    now = dt.datetime.now(dt.UTC)
+
+    await engine.handle_track_event(_track_event("track.started", "1", x=50.0, y=10.0), repo, now)
+    drafts = await engine.handle_track_event(_track_event("track.updated", "1", x=50.0, y=90.0), repo, now)
+    assert any(d.event_type == "Line Crossing" for d in drafts)
+    assert not any(d.event_type == "Fence Climbing Detected" for d in drafts)
+
+
+# --- Fighting Detection (behavioral analytics) ---
+
+
+@pytest.mark.asyncio
+async def test_fighting_fires_for_two_close_erratically_moving_person_tracks() -> None:
+    settings = _settings(
+        fighting_proximity_threshold=50.0, fighting_jitter_threshold=0.6, fighting_min_mean_displacement=1.0,
+        fighting_history_size=6,
+    )
+    engine = RuleEngine(settings, _no_zones)
+    repo = FakeTrackRepo()
+    now = dt.datetime.now(dt.UTC)
+
+    await engine.handle_track_event(_track_event("track.started", "1", x=50.0, y=50.0), repo, now)
+    await engine.handle_track_event(_track_event("track.started", "2", x=52.0, y=50.0), repo, now)
+
+    # Alternating small/large jumps -> high displacement variance relative
+    # to its own mean, the "erratic" signature (see rules/fighting.py).
+    for x1, x2 in [(51.0, 53.0), (59.0, 61.0), (58.0, 60.0)]:
+        drafts1 = await engine.handle_track_event(_track_event("track.updated", "1", x=x1, y=50.0), repo, now)
+        drafts2 = await engine.handle_track_event(_track_event("track.updated", "2", x=x2, y=50.0), repo, now)
+
+    assert any(d.event_type == "Fighting Detected" and d.severity == "critical" for d in drafts2)
+
+
+@pytest.mark.asyncio
+async def test_fighting_does_not_fire_for_two_calmly_walking_person_tracks() -> None:
+    settings = _settings(fighting_proximity_threshold=50.0, fighting_jitter_threshold=0.6)
+    engine = RuleEngine(settings, _no_zones)
+    repo = FakeTrackRepo()
+    now = dt.datetime.now(dt.UTC)
+
+    await engine.handle_track_event(_track_event("track.started", "1", x=50.0, y=50.0), repo, now)
+    await engine.handle_track_event(_track_event("track.started", "2", x=53.0, y=50.0), repo, now)
+
+    all_drafts = []
+    for x1, x2 in [(52.0, 55.0), (54.0, 57.0), (56.0, 59.0), (58.0, 61.0)]:
+        all_drafts += await engine.handle_track_event(_track_event("track.updated", "1", x=x1, y=50.0), repo, now)
+        all_drafts += await engine.handle_track_event(_track_event("track.updated", "2", x=x2, y=50.0), repo, now)
+
+    assert not any(d.event_type == "Fighting Detected" for d in all_drafts)
+
+
+@pytest.mark.asyncio
+async def test_fighting_does_not_fire_for_a_single_erratic_track_alone() -> None:
+    settings = _settings(fighting_proximity_threshold=50.0, fighting_jitter_threshold=0.6)
+    engine = RuleEngine(settings, _no_zones)
+    repo = FakeTrackRepo()
+    now = dt.datetime.now(dt.UTC)
+
+    await engine.handle_track_event(_track_event("track.started", "1", x=50.0, y=50.0), repo, now)
+    all_drafts = []
+    for x1 in [51.0, 59.0, 58.0]:
+        all_drafts += await engine.handle_track_event(_track_event("track.updated", "1", x=x1, y=50.0), repo, now)
+
+    assert not any(d.event_type == "Fighting Detected" for d in all_drafts)
+
+
+# --- Abandoned Object Detection (behavioral analytics) ---
+
+
+@pytest.mark.asyncio
+async def test_abandoned_object_fires_when_bag_idle_with_no_person_nearby() -> None:
+    settings = _settings(abandoned_object_seconds_threshold=180, abandoned_object_proximity_threshold=15.0)
+    engine = RuleEngine(settings, _no_zones)
+    repo = FakeTrackRepo()
+    now = dt.datetime.now(dt.UTC)
+
+    await engine.handle_track_event(_track_event("track.started", "bag-1", "bag", x=20.0, y=20.0), repo, now)
+    later = now + dt.timedelta(seconds=200)
+    drafts = await engine.handle_track_event(
+        _track_event("track.updated", "bag-1", "bag", x=20.0, y=20.0), repo, later
+    )
+    assert any(d.event_type == "Abandoned Object Detected" and d.severity == "high" for d in drafts)
+
+
+@pytest.mark.asyncio
+async def test_abandoned_object_suppressed_when_a_person_is_nearby() -> None:
+    settings = _settings(abandoned_object_seconds_threshold=180, abandoned_object_proximity_threshold=15.0)
+    engine = RuleEngine(settings, _no_zones)
+    repo = FakeTrackRepo()
+    now = dt.datetime.now(dt.UTC)
+
+    await engine.handle_track_event(_track_event("track.started", "bag-1", "bag", x=20.0, y=20.0), repo, now)
+    await engine.handle_track_event(_track_event("track.started", "person-1", "person", x=22.0, y=22.0), repo, now)
+
+    later = now + dt.timedelta(seconds=200)
+    drafts = await engine.handle_track_event(
+        _track_event("track.updated", "bag-1", "bag", x=20.0, y=20.0), repo, later
+    )
+    assert not any(d.event_type == "Abandoned Object Detected" for d in drafts)
+
+
+@pytest.mark.asyncio
+async def test_abandoned_object_does_not_fire_before_threshold() -> None:
+    settings = _settings(abandoned_object_seconds_threshold=180)
+    engine = RuleEngine(settings, _no_zones)
+    repo = FakeTrackRepo()
+    now = dt.datetime.now(dt.UTC)
+
+    await engine.handle_track_event(_track_event("track.started", "bag-1", "bag", x=20.0, y=20.0), repo, now)
+    soon = now + dt.timedelta(seconds=30)
+    drafts = await engine.handle_track_event(
+        _track_event("track.updated", "bag-1", "bag", x=20.0, y=20.0), repo, soon
+    )
+    assert not any(d.event_type == "Abandoned Object Detected" for d in drafts)

@@ -53,6 +53,15 @@ class Settings(CommonSettings):
     # margin above that observed false-positive floor while staying
     # reachable by genuine large smoke coverage.
     smoke_min_area_fraction: float = 0.15
+    # 0.15: not itself tuned against observed false-positive data the way
+    # fire_min_area_fraction/smoke_min_area_fraction above were (blood
+    # detection hasn't been live-tested against this deployment's camera
+    # feeds yet -- see heuristics.py's docstring, points 4-6). Started at
+    # the same value they settled on because blood pooling/staining is the
+    # same class of color-only false-positive risk (rust/dirt, red fabric,
+    # red-brown wood/brick), so their observed margin is a reasonable
+    # starting point pending real data of its own.
+    blood_min_area_fraction: float = 0.15
 
     # Per-camera-per-class cooldown: doc09 §2.6 says a detection "bypasses
     # any per-alert debounce...a single high-confidence frame should alert

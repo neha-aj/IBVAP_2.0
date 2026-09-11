@@ -28,7 +28,7 @@ class ZoneLineRepository:
 
     async def update(
         self, zone_line: ZoneLine, *, name: str | None, point_a: dict | None, point_b: dict | None,
-        direction: str | None,
+        direction: str | None, line_type: str | None = None,
     ) -> ZoneLine:
         # Matches CameraService.update_camera's convention (app/services/
         # camera_service.py): "if provided, set it" -- explicitly clearing
@@ -42,6 +42,8 @@ class ZoneLineRepository:
             zone_line.point_b = point_b
         if direction is not None:
             zone_line.direction = direction
+        if line_type is not None:
+            zone_line.line_type = line_type
         await self._session.commit()
         await self._session.refresh(zone_line)
         return zone_line

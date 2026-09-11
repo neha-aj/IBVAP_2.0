@@ -36,6 +36,14 @@ COCO_TYPE_MAP: dict[int, str] = {
     21: "animal",  # bear
     22: "animal",  # zebra
     23: "animal",  # giraffe
+    # Abandoned Object Detection (behavioral analytics): the specific
+    # "someone could leave this and walk away" COCO classes, not every
+    # inanimate object YOLOv8 knows -- narrowed the same way the animal set
+    # above is, so a stray misclassification on an unrelated class doesn't
+    # produce a confusing "bag" label in practice.
+    24: "bag",  # backpack
+    26: "bag",  # handbag
+    28: "bag",  # suitcase
 }
 
 

@@ -16,6 +16,13 @@ class Settings(CommonSettings):
         "alert.new",
         "alert.updated",
         "system.health",
+        # pose-service's live, display-only posture overlay (never
+        # persisted -- see services/pose-service/app/core/config.py).
+        # Routed per-camera by pubsub_bridge.py's own `_PER_CAMERA_CHANNELS`,
+        # the same as `detection.new`/`camera.status_changed` above; this
+        # list is just the separate "what to subscribe to at all" side of
+        # that wiring.
+        "pose.updated",
     ]
 
     # --- system.health (Phase 2 M24 -- API Spec §8's documented but never-

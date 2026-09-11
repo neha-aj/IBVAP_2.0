@@ -73,6 +73,57 @@ not skipped):
    them. The area-fraction fix above is what actually addresses this
    specific, observed false positive; the variance check is a second,
    independent layer, not a substitute for it.
+
+**Blood: the same class of heuristic, added on the same honest terms, but
+NOT yet live-tested against real camera feeds the way fire/smoke were
+above.** `blood_score` uses an HSV color-range test tuned for dried/fresh
+blood's real signature -- dark red/maroon, i.e. hue near 0 (red wraps
+around both ends of OpenCV's 0-179 hue range, so both the 0-10 and 170-179
+bands are matched), moderate-to-high saturation, and *low-to-moderate*
+value/brightness -- meaningfully darker than fire's bright warm hue range
+above, which is the main thing that tells the two apart. Same
+largest-contiguous-blob area-fraction logic as `fire_score`/`smoke_score`,
+same `Settings.blood_min_area_fraction` = 0.15 starting point (chosen
+because blood pooling/staining is exactly the same class of color-only
+false-positive risk fire/smoke's own area-fraction tuning above addresses,
+not because this value has itself been tuned against any observed
+false-positive data -- it hasn't). Expected, undisclosed-no-longer failure
+modes, by the same reasoning as points 1-3 above but without this
+deployment's live footage to confirm or size them against:
+4. Rust or red-brown dirt/mud -- mineral oxide staining sits in a similar
+   dark-red hue/saturation/value band to dried blood; nothing in a pure
+   color heuristic tells the two apart.
+5. Red or maroon clothing and fabric (uniforms, blankets, upholstery) --
+   solid-color dyed fabric can be spectrally close enough to blood's hue
+   range to clear the color mask outright, the same way the red car cleared
+   `fire_score`'s color/RGB rule in point 3.
+6. Red-brown wood, brick, and terracotta surfaces -- common in exactly the
+   kind of outdoor/perimeter scenes these cameras cover, and low-saturation
+   variants of the same hue family the color mask is built around.
+
+As with fire/smoke, this is real working code that does what it claims
+(flags a dark-red/maroon-colored region of sufficient contiguous size) --
+it is not, and should not be presented as, a validated blood detector.
+Treat any alert it produces the same way: an early-warning aid requiring
+human confirmation, not a validated result.
+
+**Live-tested against this deployment's real camera feeds and tuned
+against one real false positive found that way**, same as fire/smoke's
+own points 1-3:
+7. Sunlit concrete/pavement under warm (golden-hour/sunset) lighting read
+   as "blood" -- a large driveway area picked up enough of a warm color
+   cast from low-angle sunlight to clear the original hue/value mask at
+   its untested `saturation >= 60` floor, producing repeated real "Blood
+   Detected" alerts on this deployment's own footage. Measured on that
+   exact false-positive region: saturation was low-to-moderate (median 83
+   of 255) -- consistent with a dull, lighting-tinted surface, not a
+   genuinely saturated red. Fixed by raising the saturation floor from 60
+   to 140: re-measured against the same false-positive frame, this alone
+   cuts its matched area by roughly two-thirds (comfortably back under
+   `Settings.blood_min_area_fraction`). Point 4-6 above (rust, fabric,
+   brick) may still be saturated enough to clear 140 -- this fix is
+   validated against the one real case observed, not a general solution to
+   every predicted failure mode.
 """
 
 from __future__ import annotations
@@ -177,3 +228,28 @@ def smoke_score(bgr_frame: np.ndarray, *, texture_threshold: float = 15.0, sky_e
     smoke_mask[:skip_rows, :] = 0
 
     return _largest_blob_area_fraction(smoke_mask)
+
+
+def blood_score(bgr_frame: np.ndarray) -> float:
+    """Largest contiguous blood-colored (dark red/maroon) region, as a
+    fraction of frame area. See this module's own docstring (point 4-6)
+    for the real, disclosed-up-front failure modes this is expected to
+    have -- rust/dirt, red fabric, red-brown wood/brick.
+
+    **Live-tested and tuned against one real false positive found that
+    way** (point 7 below): unlike when this function first shipped, the
+    saturation floor is no longer a guess.
+    """
+    hsv = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2HSV)
+    # OpenCV hue range is 0-179 and red wraps around both ends of it, so
+    # blood's dark-red/maroon hue needs two ranges, combined below: 0-10
+    # and 170-179. Low-to-moderate value is what separates this from
+    # fire's bright warm-hue range above -- dried/fresh blood is a dark
+    # color, not a bright one. Saturation floor 140 (raised from an
+    # untested initial 60, see point 7 below): real blood is a strongly
+    # saturated red even when dark, not a dull/muted tone.
+    lower_red = cv2.inRange(hsv, (0, 140, 20), (10, 255, 150))
+    upper_red = cv2.inRange(hsv, (170, 140, 20), (179, 255, 150))
+    blood_mask = cv2.bitwise_or(lower_red, upper_red)
+
+    return _largest_blob_area_fraction(blood_mask)

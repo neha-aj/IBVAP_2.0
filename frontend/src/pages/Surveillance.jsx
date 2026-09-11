@@ -9,12 +9,14 @@ import ActiveEvents from "../components/surveillance/ActiveEvents";
 import CameraDetails from "../components/surveillance/CameraDetails";
 import { useCameras } from "../hooks/useCameras";
 import { useDetections } from "../hooks/useDetections";
+import { usePoses } from "../hooks/usePoses";
 import { useCameraDailyCounts } from "../hooks/useCameraDailyCounts";
 
 export default function Surveillance() {
   const { cameras } = useCameras();
   const cameraIds = useMemo(() => cameras.map((c) => c.id), [cameras]);
   const { detections } = useDetections(cameraIds);
+  const { posesByCamera } = usePoses(cameraIds);
   const dailyCounts = useCameraDailyCounts();
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState("");
@@ -106,6 +108,7 @@ export default function Surveillance() {
         <CameraGrid
           cameras={filteredCameras}
           detections={detections}
+          posesByCamera={posesByCamera}
           dailyCounts={dailyCounts}
           selectedCamera={selectedCamera}
           onSelect={setSelectedCamera}

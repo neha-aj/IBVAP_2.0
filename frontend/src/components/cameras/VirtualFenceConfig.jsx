@@ -28,6 +28,17 @@ const LINE_DIRECTIONS = [
   { value: "b_to_a", label: "Point B -> Point A only" },
 ];
 
+// Behavioral analytics: marks a line as a perimeter barrier rather than an
+// ordinary road/lane boundary -- event-alert-service's `_check_line_
+// crossing` reports "Fence Climbing Detected" instead of the generic Line
+// Crossing/Wrong-Way labels for a person crossing a "fence" line. Empty
+// string (every line created before this feature, and every plain
+// boundary line) behaves exactly as before.
+const LINE_TYPES = [
+  { value: "", label: "Boundary (plain line/wrong-way)" },
+  { value: "fence", label: "Fence (perimeter barrier)" },
+];
+
 export default function VirtualFenceConfig({ camera, onClose }) {
   const [streamUrl, setStreamUrl] = useState(null);
   const [zones, setZones] = useState([]);
@@ -48,6 +59,7 @@ export default function VirtualFenceConfig({ camera, onClose }) {
   // string means "not configured", matching the backend's null default.
   const [densityThreshold, setDensityThreshold] = useState("");
   const [direction, setDirection] = useState("");
+  const [lineType, setLineType] = useState("");
   // Phase 2 M21 PPE Detection: opt-in per zone, zones only.
   const [requiresPpe, setRequiresPpe] = useState(false);
 
@@ -92,6 +104,7 @@ export default function VirtualFenceConfig({ camera, onClose }) {
     setName("Boundary Line");
     setLinePoints(DEFAULT_LINE);
     setDirection("");
+    setLineType("");
   }
 
   function selectZone(zone) {
@@ -110,6 +123,7 @@ export default function VirtualFenceConfig({ camera, onClose }) {
     setName(line.name);
     setLinePoints([line.pointA, line.pointB]);
     setDirection(line.direction ?? "");
+    setLineType(line.lineType ?? "");
   }
 
   function handleCanvasClick(event) {
@@ -157,6 +171,7 @@ export default function VirtualFenceConfig({ camera, onClose }) {
           pointA: linePoints[0],
           pointB: linePoints[1],
           direction: direction === "" ? null : direction,
+          lineType: lineType === "" ? null : lineType,
         };
         if (selected?.type === "line") {
           await zoneService.updateZoneLine(camera.id, selected.id, payload);
@@ -395,6 +410,24 @@ export default function VirtualFenceConfig({ camera, onClose }) {
                 </select>
                 <span className="mt-1 block text-[9px] leading-4 text-muted">
                   Crossing against this direction raises a Wrong-Way Movement alert instead of a plain Line Crossing.
+                </span>
+              </label>
+            )}
+
+            {mode === "line" && (
+              <label className="block">
+                <span className="mb-2 block text-[9px] font-bold uppercase tracking-wider text-muted">
+                  Line Type <span className="normal-case text-muted/70">(optional)</span>
+                </span>
+                <select
+                  value={lineType}
+                  onChange={(e) => setLineType(e.target.value)}
+                  className="w-full border border-line bg-panelSecondary px-3 py-2.5 text-xs text-secondary outline-none focus:border-info"
+                >
+                  {LINE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+                <span className="mt-1 block text-[9px] leading-4 text-muted">
+                  A person crossing a Fence line raises a Fence Climbing Detected alert instead.
                 </span>
               </label>
             )}

@@ -1,8 +1,12 @@
-"""Reports a fire/smoke detection to Event/Alert Service's shared internal
-event contract (Phase 2 doc08 §4) -- same pattern as ANPR's own EventClient
-(M15). doc09 §2.6: severity is always `critical` and `requiresReview` is
-always true (a fire/smoke detection always needs a human to look, unlike a
-routine ANPR plate read)."""
+"""Reports a fire/smoke/blood detection to Event/Alert Service's shared
+internal event contract (Phase 2 doc08 §4) -- same pattern as ANPR's own
+EventClient (M15). doc09 §2.6: severity is always `critical` and
+`requiresReview` is always true (a fire/smoke/blood detection always needs
+a human to look, unlike a routine ANPR plate read) -- which also means
+"Blood Detected" automatically gets the same snapshot + full video-clip
+proof as "Fire Detected"/"Smoke Detected" through event-alert-service's
+existing generic critical-severity recording pipeline, with no separate
+wiring needed here."""
 
 from __future__ import annotations
 

@@ -30,3 +30,9 @@ class ZoneLine(Base):
     # allowed-direction label for Wrong-Way Detection (M14, e.g. "a_to_b" /
     # "b_to_a"); nullable because Line Crossing (M13) doesn't need one.
     direction: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Fence Climbing Detection (behavioral analytics): nullable, defaults to
+    # NULL ("boundary" -- an ordinary line-crossing/wrong-way line, today's
+    # only behavior). Only "fence" changes anything -- see event-alert-
+    # service's `rules/engine.py::_check_line_crossing` -- so every line
+    # created before this column existed keeps behaving exactly as before.
+    line_type: Mapped[str | None] = mapped_column(String, nullable=True)

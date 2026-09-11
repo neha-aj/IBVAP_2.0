@@ -6,7 +6,7 @@ import StatusDot from '../common/StatusDot';
 import { cameraService } from '../../services/cameraService';
 import { GATEWAY_ORIGIN } from '../../services/api';
 
-export default function CameraCard({ camera, detections = [], dailyCounts, selected, onSelect }) {
+export default function CameraCard({ camera, detections = [], poses = [], dailyCounts, selected, onSelect }) {
   const isOffline = camera.status === 'offline';
   const isDual = camera.type === 'dual';
   const [streamUrl, setStreamUrl] = useState(null);
@@ -54,11 +54,11 @@ export default function CameraCard({ camera, detections = [], dailyCounts, selec
         // same footprint as a normal single-feed tile, just two side by side
         // instead of one full-width one.
         <div className="grid grid-cols-2 gap-px bg-line">
-          <VideoPlaceholder cameraName="RGB" detections={detections} streamUrl={streamUrl} />
+          <VideoPlaceholder cameraName="RGB" detections={detections} poses={poses} streamUrl={streamUrl} />
           <VideoPlaceholder cameraName="THERMAL" detections={[]} streamUrl={thermalStreamUrl} />
         </div>
       ) : (
-        <VideoPlaceholder cameraName={camera.id} detections={detections} streamUrl={streamUrl} />
+        <VideoPlaceholder cameraName={camera.id} detections={detections} poses={poses} streamUrl={streamUrl} />
       )}
       <div className="p-3">
         <div className="flex items-start justify-between gap-2">

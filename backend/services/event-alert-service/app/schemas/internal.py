@@ -13,7 +13,11 @@ TrackEventType = Literal["track.started", "track.updated", "track.lost"]
 # bbox position, not object_type, so no engine change is needed beyond
 # accepting the value here). Count-threshold and Crowd Density stay
 # person/vehicle-only by design (see engine.py's own object_type checks).
-ObjectType = Literal["person", "vehicle", "animal"]
+# "bag" added for Abandoned Object Detection (behavioral analytics) --
+# tracked the same way, but only `engine.py`'s new abandoned-object check
+# reads it; every other rule ignores a "bag" track exactly like it already
+# ignores "animal" tracks it doesn't care about.
+ObjectType = Literal["person", "vehicle", "animal", "bag"]
 
 
 class _CamelModel(BaseModel):
@@ -78,6 +82,11 @@ class ZoneLine(_CamelModel):
     point_a: Point
     point_b: Point
     direction: str | None = None
+    # Fence Climbing Detection (behavioral analytics): None/"boundary" (every
+    # pre-existing line) behaves exactly as before; "fence" makes
+    # `engine.py::_check_line_crossing` report "Fence Climbing Detected"
+    # instead of the generic Line Crossing/Wrong-Way labels for a person.
+    line_type: str | None = None
 
 
 class Calibration(_CamelModel):

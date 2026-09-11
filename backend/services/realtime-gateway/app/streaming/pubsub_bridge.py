@@ -28,7 +28,7 @@ _GLOBAL_TOPIC_BY_CHANNEL = {
     "alert.updated": "alerts",
     "system.health": "system",
 }
-_PER_CAMERA_CHANNELS = {"camera.status_changed", "detection.new"}
+_PER_CAMERA_CHANNELS = {"camera.status_changed", "detection.new", "pose.updated"}
 
 
 class PubSubBridge:

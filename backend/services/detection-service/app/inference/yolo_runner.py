@@ -22,6 +22,21 @@ class YoloRunner:
             frame,
             conf=self._confidence_threshold,
             classes=list(COCO_TYPE_MAP.keys()),
+            # `COCO_TYPE_MAP` deliberately coalesces several raw COCO classes
+            # into one reported type each (car/motorcycle/bus/truck ->
+            # "vehicle"; 8 species -> "animal"). Ultralytics' NMS is
+            # per-class by default, so one real object YOLO scores
+            # ambiguously between two of those raw classes (e.g. a
+            # car-or-truck-shaped SUV) can survive as two separate
+            # overlapping boxes -- confirmed live: a single parked SUV
+            # produced 2-3 simultaneous "vehicle" boxes/track ids on one of
+            # this deployment's real camera feeds. `agnostic_nms=True`
+            # suppresses overlapping boxes across all classes together,
+            # matching `OnnxRunner`'s NMS below (which is already
+            # class-agnostic, since `cv2.dnn.NMSBoxes` there is never given
+            # per-class grouping) -- this brings the two backends' behavior
+            # in line with each other, not a new tradeoff unique to one.
+            agnostic_nms=True,
             verbose=False,
         )
         detections: list[RawDetection] = []

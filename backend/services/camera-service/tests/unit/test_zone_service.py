@@ -80,13 +80,17 @@ class FakeZoneRepo:
 
 
 class FakeZoneLine:
-    def __init__(self, camera_id, name: str, point_a: dict, point_b: dict, direction: str | None) -> None:
+    def __init__(
+        self, camera_id, name: str, point_a: dict, point_b: dict, direction: str | None,
+        line_type: str | None = None,
+    ) -> None:
         self.id = uuid.uuid4()
         self.camera_id = camera_id
         self.name = name
         self.point_a = point_a
         self.point_b = point_b
         self.direction = direction
+        self.line_type = line_type
 
 
 class FakeZoneLineRepo:
@@ -104,7 +108,9 @@ class FakeZoneLineRepo:
         self.lines[line.id] = line
         return line
 
-    async def update(self, line: FakeZoneLine, *, name, point_a, point_b, direction) -> FakeZoneLine:
+    async def update(
+        self, line: FakeZoneLine, *, name, point_a, point_b, direction, line_type=None,
+    ) -> FakeZoneLine:
         if name is not None:
             line.name = name
         if point_a is not None:
@@ -113,6 +119,8 @@ class FakeZoneLineRepo:
             line.point_b = point_b
         if direction is not None:
             line.direction = direction
+        if line_type is not None:
+            line.line_type = line_type
         return line
 
     async def delete(self, line: FakeZoneLine) -> None:
@@ -247,6 +255,39 @@ async def test_update_zone_line_changes_points() -> None:
         "CAM-01", uuid.UUID(created.id), ZoneLineUpdate(point_b=Point(x=99, y=99))
     )
     assert updated.point_b.x == 99
+
+
+@pytest.mark.asyncio
+async def test_create_zone_line_defaults_line_type_to_none() -> None:
+    """Every line created via the old API contract (no `lineType` in the
+    request body) must keep behaving as an ordinary boundary line -- see
+    engine.py::_check_line_crossing's own handling of a None line_type."""
+    camera = FakeCamera("CAM-01")
+    service = ZoneLineService(FakeZoneLineRepo(), FakeCameraRepo([camera]))
+
+    created = await service.create_zone_line(
+        "CAM-01", ZoneLineCreate(name="Boundary", point_a=Point(x=0, y=50), point_b=Point(x=100, y=50)),
+    )
+    assert created.line_type is None
+
+
+@pytest.mark.asyncio
+async def test_create_and_update_zone_line_as_a_fence() -> None:
+    camera = FakeCamera("CAM-01")
+    service = ZoneLineService(FakeZoneLineRepo(), FakeCameraRepo([camera]))
+
+    created = await service.create_zone_line(
+        "CAM-01",
+        ZoneLineCreate(
+            name="Perimeter", point_a=Point(x=0, y=50), point_b=Point(x=100, y=50), lineType="fence",
+        ),
+    )
+    assert created.line_type == "fence"
+
+    updated = await service.update_zone_line(
+        "CAM-01", uuid.UUID(created.id), ZoneLineUpdate(lineType="boundary"),
+    )
+    assert updated.line_type == "boundary"
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { CameraOff } from 'lucide-react';
 import DetectionOverlay from './DetectionOverlay';
 
-export default function VideoPlaceholder({ cameraName = 'CAMERA', detections = [], streamUrl = null, className = '', fill = false }) {
+export default function VideoPlaceholder({ cameraName = 'CAMERA', detections = [], poses = [], streamUrl = null, className = '', fill = false }) {
   const [streamFailed, setStreamFailed] = useState(false);
   const showStream = Boolean(streamUrl) && !streamFailed;
 
@@ -32,7 +32,7 @@ export default function VideoPlaceholder({ cameraName = 'CAMERA', detections = [
           </div>
         </div>
       )}
-      <DetectionOverlay detections={detections} />
+      <DetectionOverlay detections={detections} poses={poses} />
       <div className="absolute bottom-3 left-3 font-mono text-[10px] text-secondary">
         LIVE · {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
       </div>

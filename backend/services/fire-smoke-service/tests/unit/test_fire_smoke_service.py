@@ -9,7 +9,7 @@ def _settings(**overrides) -> Settings:
     defaults = {
         "postgres_user": "u", "postgres_password": "p", "postgres_db": "d", "jwt_secret": "s",
         "internal_service_token": "t", "fire_min_area_fraction": 0.1, "smoke_min_area_fraction": 0.1,
-        "alert_cooldown_seconds": 60.0,
+        "blood_min_area_fraction": 0.1, "alert_cooldown_seconds": 60.0,
     }
     defaults.update(overrides)
     return Settings(**defaults)
@@ -62,10 +62,25 @@ async def test_process_frame_reports_smoke_above_threshold() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_frame_none_below_both_thresholds() -> None:
+async def test_process_frame_reports_blood_above_threshold() -> None:
+    client = FakeEventClient()
+    service = FireSmokeService(
+        settings=_settings(), event_client=client, fire_score=lambda f: 0.0, smoke_score=lambda f: 0.0,
+        blood_score=lambda f: 0.4,
+    )
+
+    result = await service.process_frame("CAM-01", _frame())
+
+    assert result == "Blood Detected"
+    assert client.reported == [("CAM-01", "Blood Detected", 0.4)]
+
+
+@pytest.mark.asyncio
+async def test_process_frame_none_below_all_thresholds() -> None:
     client = FakeEventClient()
     service = FireSmokeService(
         settings=_settings(), event_client=client, fire_score=lambda f: 0.02, smoke_score=lambda f: 0.02,
+        blood_score=lambda f: 0.02,
     )
 
     assert await service.process_frame("CAM-01", _frame()) is None

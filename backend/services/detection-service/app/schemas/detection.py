@@ -3,8 +3,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-# "animal" added Phase 2 M21 -- see app/inference/base.py::COCO_TYPE_MAP.
-DetectionType = Literal["person", "vehicle", "animal"]
+# "animal" added Phase 2 M21; "bag" added for Abandoned Object Detection
+# (behavioral analytics) -- see app/inference/base.py::COCO_TYPE_MAP.
+DetectionType = Literal["person", "vehicle", "animal", "bag"]
 
 
 class _CamelModel(BaseModel):

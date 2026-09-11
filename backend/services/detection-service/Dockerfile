@@ -22,8 +22,13 @@ COPY services/detection-service/app /srv/app
 # CUDA variant for hosts with an NVIDIA runtime). Ultralytics auto-detects
 # CUDA at runtime regardless, so this same code path also works unmodified
 # if this image is ever run with a GPU attached.
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir \
+# --timeout/--retries: torch's CPU wheel is large enough that pip's default
+# read timeout can trip on a slow/unstable connection mid-download (build-
+# environment flakiness, not a real dependency problem) -- purely a build
+# robustness setting, no effect on the installed package versions/behavior.
+RUN pip install --no-cache-dir --timeout 120 --retries 5 torch torchvision \
+    --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir --timeout 120 --retries 5 \
     fastapi>=0.111 "uvicorn[standard]>=0.30" redis>=5.0 httpx>=0.27 \
     numpy>=1.26 opencv-python-headless>=4.10 pydantic>=2.7 pydantic-settings>=2.3 \
     structlog>=24.1 ultralytics>=8.2 prometheus-client>=0.20
