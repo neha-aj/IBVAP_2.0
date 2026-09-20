@@ -14,10 +14,13 @@ import numpy as np
 import redis.asyncio as redis
 from prometheus_client import Counter
 
+from ibvap_common.camera_pause import PAUSED_CAMERAS_KEY
 from ibvap_common.logging import correlation_id_context, get_logger
 from ibvap_common.redis_streams import ensure_consumer_group, xack, xread_group
+from ibvap_common.thermal_sim import simulate_thermal
 
 from app.inference.base import InferenceEngine
+from app.inference.fusion_merger import FusionSettings, merge_detections
 from app.streaming.detection_publisher import DetectionPublisher, to_detections
 
 logger = get_logger(__name__)
@@ -39,6 +42,7 @@ class FrameConsumer:
         read_count: int,
         block_ms: int,
         modality: str | None = None,
+        derived_thermal_fusion: FusionSettings | None = None,
     ) -> None:
         self.camera_id = camera_id
         self._redis = redis_client
@@ -56,6 +60,13 @@ class FrameConsumer:
         # way -- only the stream key changes, so publishing/logging/consumer
         # naming below stay associated with the actual camera.
         self._stream_key = f"cam:{camera_id}:frames" if modality is None else f"cam:{camera_id}:frames:{modality}"
+        # Only used for a camera whose thermal view is *derived* from its own
+        # RGB video: ingestion flags each such frame (`derivedThermal`), and
+        # this consumer then also detects on the simulated thermal rendering
+        # of the same frame and fuses the two into one result (see
+        # `_detect_with_derived_thermal`). None/no flag = every other camera,
+        # unchanged.
+        self._derived_thermal_fusion = derived_thermal_fusion
         self._task: asyncio.Task | None = None
         self._stop_requested = False
 
@@ -104,6 +115,14 @@ class FrameConsumer:
         correlation_id = (fields.get(b"correlationId") or b"").decode()
         with correlation_id_context(correlation_id):
             try:
+                # A paused camera must produce no further detections. Ingestion
+                # already stops feeding it and clears the queue, but this
+                # consumer reads a batch ahead -- frames it had already pulled
+                # when the pause landed would otherwise still be run through
+                # inference (seconds of it, on CPU), and the counts on screen
+                # would keep shifting after the operator froze the view.
+                if await self._is_paused():
+                    return
                 jpeg_bytes = fields.get(b"jpeg")
                 if jpeg_bytes:
                     loop_generation = int(fields.get(b"loopGeneration", b"0") or b"0")
@@ -117,6 +136,15 @@ class FrameConsumer:
                             frame_width=width,
                             frame_height=height,
                         )
+                        if fields.get(b"derivedThermal") and self._derived_thermal_fusion is not None:
+                            detections = await self._detect_with_derived_thermal(
+                                frame, detections, width=width, height=height
+                            )
+                        # Inference on CPU can take seconds; if the operator paused
+                        # meanwhile, this frame's result is stale by the time it's
+                        # ready -- drop it rather than publish after the freeze.
+                        if await self._is_paused():
+                            return
                         await self._publisher.publish(self.camera_id, detections, loop_generation=loop_generation)
                         _FRAMES_PROCESSED.labels(camera_id=self.camera_id).inc()
             except Exception as exc:
@@ -128,6 +156,28 @@ class FrameConsumer:
                 # should never block the stream forever (SAS §11: degrade
                 # gracefully rather than crash or stall).
                 await xack(self._redis, self._stream_key, self._group_name, message_id)
+
+    async def _is_paused(self) -> bool:
+        try:
+            return bool(await self._redis.sismember(PAUSED_CAMERAS_KEY, self.camera_id))
+        except Exception as exc:  # noqa: BLE001 -- a Redis blip must not stall inference
+            logger.warning("pause_state_check_failed", camera_id=self.camera_id, error=str(exc))
+            return False
+
+    async def _detect_with_derived_thermal(
+        self, frame: np.ndarray, rgb_detections: list, *, width: int, height: int
+    ) -> list:
+        """Runs detection on the simulated thermal rendering of this same
+        frame and fuses it with the RGB result. Both views show the same
+        objects in the same places, so the fusion merge treats matching boxes
+        as one object (never two) -- a person is counted once no matter how
+        many of the two views saw them."""
+        thermal_frame = await asyncio.to_thread(simulate_thermal, frame)
+        raw_thermal = await asyncio.to_thread(self._engine.infer, thermal_frame)
+        thermal_detections = to_detections(
+            camera_id=self.camera_id, raw_detections=raw_thermal, frame_width=width, frame_height=height
+        )
+        return merge_detections(rgb_detections, thermal_detections, self._derived_thermal_fusion)
 
 
 def _decode_jpeg(jpeg_bytes: bytes) -> np.ndarray | None:

@@ -5,6 +5,7 @@ import asyncio
 import httpx
 import redis.asyncio as redis
 
+from ibvap_common.derived_thermal import is_derived_thermal
 from ibvap_common.logging import get_logger
 from ibvap_common.redis_streams import build_redis_client
 
@@ -75,7 +76,18 @@ class WorkerManager:
             camera_id = config["id"]
             camera_type = config["type"]
 
-            if camera_type == "dual":
+            if camera_type == "dual" and is_derived_thermal(config.get("thermalSourceUrl")):
+                # Thermal view rendered from this camera's own RGB video: a
+                # single worker (no second capture), which renders the thermal
+                # preview and flags each frame itself -- see CameraWorker's
+                # `derive_thermal`. Only the ':rgb' key exists, so a formerly
+                # two-worker camera's ':thermal' worker is stopped below.
+                seen_keys.add(f"{camera_id}:rgb")
+                await self._reconcile_worker(
+                    worker_key=f"{camera_id}:rgb", camera_id=camera_id, camera_type=camera_type,
+                    source_url=config.get("sourceUrl"), modality=None, report_status=True, derive_thermal=True,
+                )
+            elif camera_type == "dual":
                 # M11: one logical camera, two simultaneous capture workers
                 # (RGB + thermal) -- tracked under compound keys so both can
                 # coexist in `self._workers` (which is otherwise one entry
@@ -112,6 +124,7 @@ class WorkerManager:
         source_url: str | None,
         modality: str | None,
         report_status: bool,
+        derive_thermal: bool = False,
     ) -> None:
         """Same reconcile-one-worker logic the loop above always ran
         per-camera, factored out so it can run once (unchanged behavior)
@@ -122,7 +135,10 @@ class WorkerManager:
         if existing is not None:
             stuck_seconds = existing.seconds_since_last_frame()
             is_stuck = stuck_seconds > self._settings.stuck_worker_timeout_seconds
-            if existing.is_running and existing.source_url == source_url and not is_stuck:
+            if (
+                existing.is_running and existing.source_url == source_url and not is_stuck
+                and existing.derive_thermal == derive_thermal
+            ):
                 return  # already running the current source -- nothing to do
             # Either the task exited (e.g. source failed to open), a new
             # file was uploaded to this camera, or the worker is stuck
@@ -157,6 +173,7 @@ class WorkerManager:
             http_client=self._http,
             modality=modality,
             report_status=report_status,
+            derive_thermal=derive_thermal,
         )
         worker.start()
         self._workers[worker_key] = worker

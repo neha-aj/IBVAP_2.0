@@ -6,10 +6,14 @@ import Badge from '../common/Badge';
 import StatusDot from '../common/StatusDot';
 import { cameraService } from '../../services/cameraService';
 import { GATEWAY_ORIGIN } from '../../services/api';
+import { hasGeneratedThermal } from '../../utils/thermal';
 
 export default function CameraCard({ camera, detections = [], poses = [], dailyCounts, selected, onSelect, paused = false, onTogglePause }) {
   const isOffline = camera.status === 'offline';
   const isDual = camera.type === 'dual';
+  // The thermal view is rendered from the same frame the detections came
+  // from, so the very same boxes line up on it -- draw them there too.
+  const thermalIsGenerated = hasGeneratedThermal(camera);
   const [streamUrl, setStreamUrl] = useState(null);
   const [thermalStreamUrl, setThermalStreamUrl] = useState(null);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -57,7 +61,12 @@ export default function CameraCard({ camera, detections = [], poses = [], dailyC
         // instead of one full-width one.
         <div className="grid grid-cols-2 gap-px bg-line">
           <VideoPlaceholder cameraName="RGB" detections={detections} poses={poses} streamUrl={streamUrl} paused={paused} />
-          <VideoPlaceholder cameraName="THERMAL" detections={[]} streamUrl={thermalStreamUrl} paused={paused} />
+          <VideoPlaceholder
+            cameraName={thermalIsGenerated ? 'THERMAL (SIMULATED)' : 'THERMAL'}
+            detections={thermalIsGenerated ? detections : []}
+            streamUrl={thermalStreamUrl}
+            paused={paused}
+          />
         </div>
       ) : (
         <VideoPlaceholder cameraName={camera.id} detections={detections} poses={poses} streamUrl={streamUrl} paused={paused} />
@@ -124,6 +133,7 @@ export default function CameraCard({ camera, detections = [], poses = [], dailyC
           poses={poses}
           streamUrl={streamUrl}
           thermalStreamUrl={thermalStreamUrl}
+          thermalIsGenerated={thermalIsGenerated}
           paused={paused}
           onTogglePause={onTogglePause ? () => onTogglePause(camera.id) : undefined}
           onClose={() => setViewerOpen(false)}

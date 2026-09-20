@@ -53,6 +53,11 @@ class Settings(CommonSettings):
     # ">30% bbox IoU" needs a concrete constant somewhere -- kept next to
     # the other fusion tunables rather than hardcoded in fusion_merger.py.
     fusion_min_iou: float = 0.30
+    # For a camera whose thermal view is derived from its own RGB video: a
+    # thermal-only detection (one the RGB view didn't also find) must clear
+    # this confidence to be kept, so a rendering artefact isn't counted as a
+    # second, extra object. Real thermal cameras keep the 0.0 default.
+    fusion_derived_thermal_only_min_confidence: float = 0.50
 
     # --- M11 edge deployment profile (SAS M11 §7) ---
     # 'central' (default, unchanged Phase 1/2 behavior): DetectionPublisher

@@ -33,6 +33,8 @@ export default function Cameras() {
   const [deleteError, setDeleteError] = useState("");
   const [cameraPendingDelete, setCameraPendingDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [thermalBusy, setThermalBusy] = useState(false);
+  const [notice, setNotice] = useState(null);
 
   const filteredCameras = useMemo(() => {
     return cameras.filter((camera) => {
@@ -63,6 +65,29 @@ export default function Cameras() {
 
     setEditingCamera(selectedCamera);
     setShowForm(true);
+  }
+
+  async function changeGeneratedThermal(enable) {
+    if (!selectedCamera) return;
+    setThermalBusy(true);
+    setNotice(null);
+    try {
+      const updated = enable
+        ? await cameraService.generateThermal(selectedCamera.id)
+        : await cameraService.removeGeneratedThermal(selectedCamera.id);
+      await refetch();
+      setSelectedCamera(updated);
+      setNotice({
+        tone: "info",
+        text: enable
+          ? "Thermal view enabled -- it appears on Live Surveillance within a few seconds."
+          : "Thermal view removed.",
+      });
+    } catch (err) {
+      setNotice({ tone: "danger", text: err.detail || err.message || "Couldn't change the thermal view." });
+    } finally {
+      setThermalBusy(false);
+    }
   }
 
   async function confirmDeleteCamera() {
@@ -111,6 +136,20 @@ export default function Cameras() {
         await cameraService.uploadVideo(created.id, formData.thermalFile, "thermal");
       }
 
+      // Optional extra: give a plain video camera a simulated thermal view.
+      // Failing here must not undo the camera that was just created, so it
+      // surfaces as a notice rather than an error on the form.
+      if (formData.type === "file" && formData.generateThermal && formData.file) {
+        try {
+          await cameraService.generateThermal(created.id);
+        } catch (err) {
+          setNotice({
+            tone: "danger",
+            text: `Camera created, but the thermal view couldn't be generated: ${err.detail || err.message}`,
+          });
+        }
+      }
+
       await refetch();
       setSelectedCamera(created);
     }
@@ -134,6 +173,20 @@ export default function Cameras() {
           </button>
         }
       />
+
+      {notice && (
+        <div
+          role="status"
+          className={`mb-3 flex items-center justify-between border px-3 py-2 text-xs ${
+            notice.tone === "danger" ? "border-danger/40 bg-danger/10 text-danger" : "border-info/40 bg-info/10 text-info"
+          }`}
+        >
+          <span>{notice.text}</span>
+          <button type="button" onClick={() => setNotice(null)} className="ml-3 font-semibold hover:text-primary">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <CameraFilters
         search={search}
@@ -202,6 +255,9 @@ export default function Cameras() {
             onConfigureDetection={() => setShowDetectionConfig(true)}
             onConfigureFence={() => setShowFenceConfig(true)}
             onConfigureCalibration={() => setShowCalibrationConfig(true)}
+            onGenerateThermal={() => changeGeneratedThermal(true)}
+            onRemoveThermal={() => changeGeneratedThermal(false)}
+            thermalBusy={thermalBusy}
         />
         )}
 

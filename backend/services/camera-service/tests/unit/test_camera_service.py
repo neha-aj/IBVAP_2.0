@@ -337,3 +337,85 @@ async def test_status_summary_counts_by_status() -> None:
     assert summary.total == 2
     assert summary.online == 1
     assert summary.offline == 1
+
+
+@pytest.mark.asyncio
+async def test_enable_derived_thermal_turns_a_video_camera_into_a_generated_thermal_dual() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(CameraCreate(external_id="CAM-F-1", name="F", location="A", type="file"))
+    await service.set_uploaded_source("CAM-F-1", "/data/media/uploads/CAM-F-1/a.mp4")
+
+    updated = await service.enable_derived_thermal("CAM-F-1")
+
+    assert updated.type == "dual"
+    assert updated.thermal_source_url == "derived:rgb"
+    assert updated.source_url == "/data/media/uploads/CAM-F-1/a.mp4"  # the RGB video is untouched
+
+
+@pytest.mark.asyncio
+async def test_enable_derived_thermal_needs_an_uploaded_video_first() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(CameraCreate(external_id="CAM-F-2", name="F", location="A", type="file"))
+
+    with pytest.raises(ConflictError):
+        await service.enable_derived_thermal("CAM-F-2")
+
+
+@pytest.mark.asyncio
+async def test_enable_derived_thermal_rejects_live_stream_cameras() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(
+        CameraCreate(external_id="CAM-R-1", name="R", location="A", type="rtsp", source_url="rtsp://x/y")
+    )
+
+    with pytest.raises(ConflictError):
+        await service.enable_derived_thermal("CAM-R-1")
+
+
+@pytest.mark.asyncio
+async def test_enable_derived_thermal_will_not_overwrite_a_real_thermal_video() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(
+        CameraCreate(external_id="CAM-D-1", name="D", location="A", type="dual",
+                     source_url="/rgb.mp4", thermal_source_url="/thermal.mp4")
+    )
+
+    with pytest.raises(ConflictError):
+        await service.enable_derived_thermal("CAM-D-1")
+
+
+@pytest.mark.asyncio
+async def test_enable_derived_thermal_is_idempotent() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(CameraCreate(external_id="CAM-F-3", name="F", location="A", type="file"))
+    await service.set_uploaded_source("CAM-F-3", "/a.mp4")
+    await service.enable_derived_thermal("CAM-F-3")
+
+    again = await service.enable_derived_thermal("CAM-F-3")
+
+    assert again.type == "dual" and again.thermal_source_url == "derived:rgb"
+
+
+@pytest.mark.asyncio
+async def test_disable_derived_thermal_restores_a_plain_video_camera() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(CameraCreate(external_id="CAM-F-4", name="F", location="A", type="file"))
+    await service.set_uploaded_source("CAM-F-4", "/a.mp4")
+    await service.enable_derived_thermal("CAM-F-4")
+
+    restored = await service.disable_derived_thermal("CAM-F-4")
+
+    assert restored.type == "file" and restored.thermal_source_url is None
+    assert restored.source_url == "/a.mp4"
+
+
+@pytest.mark.asyncio
+async def test_disable_derived_thermal_refuses_a_camera_with_real_thermal() -> None:
+    service = CameraService(FakeCameraRepo(), FakeSectorRepo())
+    await service.create_camera(
+        CameraCreate(external_id="CAM-D-2", name="D", location="A", type="dual",
+                     source_url="/rgb.mp4", thermal_source_url="/thermal.mp4")
+    )
+
+    with pytest.raises(ConflictError):
+        await service.disable_derived_thermal("CAM-D-2")

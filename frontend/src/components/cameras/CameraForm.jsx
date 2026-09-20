@@ -9,6 +9,7 @@ const emptyForm = {
   sourceUrl: "",
   file: null,
   thermalFile: null,
+  generateThermal: false,
 };
 
 const TYPE_LABELS = {
@@ -55,6 +56,10 @@ export default function CameraForm({ camera, onSave, onClose }) {
 
   function handleFileChange(e) {
     setForm((current) => ({ ...current, file: e.target.files?.[0] || null }));
+  }
+
+  function handleGenerateThermalChange(e) {
+    setForm((current) => ({ ...current, generateThermal: e.target.checked }));
   }
 
   function handleThermalFileChange(e) {
@@ -178,6 +183,24 @@ export default function CameraForm({ camera, onSave, onClose }) {
                         className="w-full border border-line bg-panelSecondary px-3 py-2.5 text-xs text-secondary outline-none file:mr-3 file:border-0 file:bg-info/10 file:px-3 file:py-1.5 file:text-info"
                       />
                     </label>
+
+                    {form.type === "file" && (
+                      <label className="flex items-start gap-2 border border-line bg-panelSecondary p-3">
+                        <input
+                          type="checkbox"
+                          checked={form.generateThermal}
+                          onChange={handleGenerateThermalChange}
+                          className="mt-0.5"
+                        />
+                        <span className="text-xs text-secondary">
+                          Also generate a thermal view from this video
+                          <span className="mt-1 block text-[11px] text-muted">
+                            A simulated thermal rendering is shown next to the video and analysed too; people and
+                            objects are counted once across both. It's an approximation, not a real thermal sensor.
+                          </span>
+                        </span>
+                      </label>
+                    )}
 
                     {form.type === "dual" && (
                       <label className="block">

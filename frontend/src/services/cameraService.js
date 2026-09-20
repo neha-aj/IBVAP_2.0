@@ -19,6 +19,11 @@ export const cameraService = {
   getPaused: () => api.get("/cameras/paused"),
   pause: (id) => api.post(`/cameras/${id}/pause`),
   resume: (id) => api.post(`/cameras/${id}/resume`),
+  // Adds a simulated thermal view rendered from this camera's own uploaded
+  // video (no separate thermal file); detection then runs on both views
+  // and counts each object once. Admin only.
+  generateThermal: (id) => api.post(`/cameras/${id}/thermal/generate`),
+  removeGeneratedThermal: (id) => api.delete(`/cameras/${id}/thermal/generate`),
   getCurrentDetections: (id) => api.get(`/cameras/${id}/detections/current`),
   getHealth: (id) => api.get(`/cameras/${id}/health`),
   create: (payload) => api.post("/cameras", payload),

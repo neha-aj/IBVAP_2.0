@@ -14,7 +14,9 @@ import cv2
 import httpx
 import redis.asyncio as redis
 
+from ibvap_common.camera_pause import PAUSED_CAMERAS_KEY
 from ibvap_common.logging import get_logger
+from ibvap_common.thermal_sim import simulate_thermal
 
 from app.capture.base import FrameSource
 from app.capture.factory import build_frame_source
@@ -26,12 +28,11 @@ from app.streaming.frame_publisher import FramePublisher
 
 logger = get_logger(__name__)
 
-# Set of camera ids an operator has paused from the Surveillance page
+# PAUSED_CAMERAS_KEY: the Redis set of camera ids an operator has paused
 # (camera-service's POST /cameras/{id}/pause|resume writes it; this worker
 # only ever reads it). Kept in Redis rather than in this process so a pause
 # survives an ingestion restart and camera-service doesn't need a direct
 # line to this service.
-PAUSED_CAMERAS_KEY = "cameras:paused"
 # How often a paused/unpaused worker re-checks that set -- a resume takes
 # effect within this long, without a Redis round-trip on every captured frame.
 _PAUSE_POLL_SECONDS = 0.5
@@ -49,6 +50,7 @@ class CameraWorker:
         http_client: httpx.AsyncClient,
         modality: str | None = None,
         report_status: bool = True,
+        derive_thermal: bool = False,
     ) -> None:
         self.camera_id = camera_id
         # Public so WorkerManager can detect a re-upload (new sourceUrl on an
@@ -76,6 +78,13 @@ class CameraWorker:
         # slot (see frame_cache calls below) so it doesn't fight the RGB
         # worker over the one live-preview entry for this camera_id.
         self._cache_key = camera_id if modality is None else f"{camera_id}:{modality}"
+        # A camera whose thermal view is rendered from this same video (no
+        # separate thermal file): each captured frame also gets a simulated
+        # thermal rendering for the `{camera_id}:thermal` preview slot, and
+        # frames on the stream are flagged so detection analyses both views
+        # of the same frame together. False for every other camera.
+        self.derive_thermal = derive_thermal
+        self._thermal_cache_key = f"{camera_id}:thermal"
         self._task: asyncio.Task | None = None
         self._stop_requested = False
         self._reported_status: str | None = None
@@ -153,6 +162,8 @@ class CameraWorker:
                 pass
         await frame_cache.clear(self._cache_key)
         await frame_ring_buffer.clear(self._cache_key)
+        if self.derive_thermal:
+            await frame_cache.clear(self._thermal_cache_key)
 
     def _loop_generation_key(self) -> str:
         # Scoped by source_url (hashed -- it's a filesystem path, not a safe
@@ -240,6 +251,12 @@ class CameraWorker:
             if ok:
                 jpeg_bytes = encoded.tobytes()
                 await frame_cache.set(self._cache_key, jpeg_bytes)
+                if self.derive_thermal:
+                    thermal_ok, thermal_encoded = cv2.imencode(
+                        ".jpg", simulate_thermal(frame), [cv2.IMWRITE_JPEG_QUALITY, self._settings.jpeg_quality]
+                    )
+                    if thermal_ok:
+                        await frame_cache.set(self._thermal_cache_key, thermal_encoded.tobytes())
                 # Evidence pre-roll: sampled well below capture_fps (see
                 # preroll_sample_interval_seconds), additive alongside the
                 # frame_cache write above -- doesn't touch the live preview.
@@ -252,7 +269,8 @@ class CameraWorker:
             # Downsample to inference_fps for the Redis Stream (SAS §5.2 input).
             if now - last_publish_at >= publish_interval:
                 await self._publisher.publish(
-                    self.camera_id, frame, loop_generation=source.loop_generation, modality=self._modality
+                    self.camera_id, frame, loop_generation=source.loop_generation, modality=self._modality,
+                    derived_thermal=self.derive_thermal,
                 )
                 last_publish_at = now
                 if source.loop_generation != persisted_generation:

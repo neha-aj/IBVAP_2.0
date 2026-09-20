@@ -45,3 +45,17 @@ async def test_publish_with_modality_uses_a_separate_stream_but_the_same_camera_
     stream_key, fields = redis_client.calls[0]
     assert stream_key == "cam:CAM-DUAL-01:frames:thermal"
     assert fields["cameraId"] == "CAM-DUAL-01"
+
+
+@pytest.mark.asyncio
+async def test_publish_flags_frames_of_a_generated_thermal_camera() -> None:
+    """Detection only runs the simulated-thermal analysis on frames carrying
+    this flag; it must be absent (not merely falsy) for every other camera."""
+    redis_client = FakeRedis()
+    publisher = FramePublisher(redis_client, jpeg_quality=80, maxlen=100)
+
+    await publisher.publish("CAM-01", _frame(), derived_thermal=True)
+    await publisher.publish("CAM-01", _frame())
+
+    assert redis_client.calls[0][1]["derivedThermal"] == "1"
+    assert "derivedThermal" not in redis_client.calls[1][1]

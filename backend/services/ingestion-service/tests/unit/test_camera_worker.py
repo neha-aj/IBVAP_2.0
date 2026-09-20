@@ -167,3 +167,62 @@ async def test_paused_file_camera_reads_nothing_and_publishes_nothing_then_resum
     await asyncio.wait_for(task, timeout=3)
     assert source.reads > 0
     assert publisher.published > 0
+
+
+class _RecordingCache:
+    def __init__(self) -> None:
+        self.set_keys: list[str] = []
+        self.cleared: list[str] = []
+
+    async def set(self, key: str, data: bytes) -> None:
+        self.set_keys.append(key)
+
+    async def clear(self, key: str) -> None:
+        self.cleared.append(key)
+
+
+class _KwargsRecordingPublisher(_RecordingPublisher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.derived_flags: list[bool] = []
+
+    async def publish(self, *args, **kwargs) -> None:
+        self.derived_flags.append(kwargs.get("derived_thermal", False))
+        await super().publish(*args, **kwargs)
+
+
+async def _run_worker_briefly(worker: CameraWorker, monkeypatch) -> _RecordingCache:
+    import app.workers.camera_worker as module
+
+    cache = _RecordingCache()
+    monkeypatch.setattr(module, "frame_cache", cache)
+    worker._should_report_status = False
+    worker._stop_requested = False
+    task = asyncio.create_task(worker._capture_loop(_CountingFileSource(), 30.0))
+    await asyncio.sleep(0.4)
+    worker._stop_requested = True
+    await asyncio.wait_for(task, timeout=3)
+    return cache
+
+
+@pytest.mark.asyncio
+async def test_worker_renders_a_thermal_preview_and_flags_frames_when_deriving(monkeypatch) -> None:
+    worker = _worker_with(_FakeRedis())
+    worker.derive_thermal = True
+    worker._publisher = _KwargsRecordingPublisher()
+
+    cache = await _run_worker_briefly(worker, monkeypatch)
+
+    assert "CAM-01" in cache.set_keys and "CAM-01:thermal" in cache.set_keys
+    assert worker._publisher.derived_flags and all(worker._publisher.derived_flags)
+
+
+@pytest.mark.asyncio
+async def test_worker_writes_no_thermal_preview_by_default(monkeypatch) -> None:
+    worker = _worker_with(_FakeRedis())
+    worker._publisher = _KwargsRecordingPublisher()
+
+    cache = await _run_worker_briefly(worker, monkeypatch)
+
+    assert "CAM-01:thermal" not in cache.set_keys
+    assert worker._publisher.derived_flags and not any(worker._publisher.derived_flags)

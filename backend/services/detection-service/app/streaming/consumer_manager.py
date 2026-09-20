@@ -15,6 +15,7 @@ import redis.asyncio as redis
 
 from ibvap_common.logging import get_logger
 from ibvap_common.redis_streams import build_redis_client
+from ibvap_common.thermal_sim import is_derived_thermal
 
 from app.core.config import Settings
 from app.inference.base import InferenceEngine
@@ -87,7 +88,15 @@ class ConsumerManager:
             camera_id = config["id"]
             camera_type = config["type"]
 
-            if camera_type == "dual":
+            if camera_type == "dual" and is_derived_thermal(config.get("thermalSourceUrl")):
+                # Thermal view rendered from this camera's own RGB video: one
+                # frame stream, one consumer -- it runs the simulated thermal
+                # detection itself on each frame (FrameConsumer's
+                # `derivedThermal` path), so there's no second stream to pair
+                # or fuse with, and the two views can never drift apart.
+                seen_keys.add(camera_id)
+                await self._reconcile_single(consumer_key=camera_id, camera_id=camera_id)
+            elif camera_type == "dual":
                 # M11: one 'dual' camera gets two FrameConsumers (RGB +
                 # thermal) sharing one FusionMerger, tracked under compound
                 # keys in `self._consumers` so both coexist -- every other
@@ -168,6 +177,14 @@ class ConsumerManager:
             read_count=self._settings.frames_read_count,
             block_ms=self._settings.frames_block_ms,
             modality=modality,
+            derived_thermal_fusion=FusionSettings(
+                frame_sync_tolerance_ms=self._settings.fusion_frame_sync_tolerance_ms,
+                low_conf_threshold=self._settings.fusion_low_conf_threshold,
+                confidence_boost=self._settings.fusion_confidence_boost,
+                suppress_threshold=self._settings.fusion_suppress_threshold,
+                min_iou=self._settings.fusion_min_iou,
+                thermal_only_min_confidence=self._settings.fusion_derived_thermal_only_min_confidence,
+            ),
         )
         consumer.start()
         self._consumers[consumer_key] = consumer

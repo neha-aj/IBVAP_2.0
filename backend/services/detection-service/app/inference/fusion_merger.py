@@ -25,6 +25,12 @@ class FusionSettings:
     confidence_boost: float = 0.25
     suppress_threshold: float = 0.25
     min_iou: float = 0.30
+    # Thermal detections that no RGB detection accounts for are kept (see
+    # merge_detections). 0.0 keeps every one, exactly as before; a *derived*
+    # thermal view (rendered from the RGB frame itself, see
+    # ibvap_common.thermal_sim) sets this higher, since an unaccounted-for box
+    # there is far more likely a rendering artefact than a real second object.
+    thermal_only_min_confidence: float = 0.0
 
 
 def _iou(a: BoundingBox, b: BoundingBox) -> float:
@@ -105,9 +111,23 @@ def merge_detections(
     # §6 step 3: thermal detections with no RGB counterpart (e.g. a fully
     # dark scene) pass through as normal detections. fusion_score stays
     # None -- there was nothing to compare them against.
+    #
+    # "No RGB counterpart" has to mean it: a confident RGB detection skips the
+    # thermal lookup above entirely, so without this check the same person
+    # seen by both modalities was emitted twice (once from each) and counted
+    # as two. A thermal box that overlaps a same-type RGB box is that same
+    # object -- the RGB detection already stands for it, so it's dropped.
+    rgb_kept = list(merged)
     for i, tdet in enumerate(thermal_detections):
-        if i not in matched_thermal_indices:
-            merged.append(tdet)
+        if i in matched_thermal_indices:
+            continue
+        if any(
+            kept.type == tdet.type and _iou(kept.bbox, tdet.bbox) > settings.min_iou for kept in rgb_kept
+        ):
+            continue
+        if tdet.confidence < settings.thermal_only_min_confidence:
+            continue
+        merged.append(tdet)
 
     return merged
 

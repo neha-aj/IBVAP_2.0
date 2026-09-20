@@ -26,6 +26,7 @@ class FakeWorker:
     def __init__(self, *, is_running: bool, source_url: str | None, idle_seconds: float) -> None:
         self.is_running = is_running
         self.source_url = source_url
+        self.derive_thermal = False  # mirrors CameraWorker's public attribute
         self._idle_seconds = idle_seconds
         self.stop_called = False
 
@@ -167,4 +168,56 @@ async def test_reconcile_stops_both_dual_workers_when_camera_removed() -> None:
     assert rgb_fake.stop_called is True
     assert thermal_fake.stop_called is True
     assert manager._workers == {}
+    await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_starts_a_single_deriving_worker_for_a_generated_thermal_camera() -> None:
+    """A 'dual' camera whose thermal view is rendered from its own RGB video
+    needs one capture worker (flagged to derive the thermal view), not two --
+    a second worker on the same file would read it out of step."""
+    manager = WorkerManager(_settings())
+    config = _dual_config()
+    config["thermalSourceUrl"] = "derived:rgb"
+    manager._fetch_camera_configs = AsyncMock(return_value=[config])
+
+    await manager._reconcile()
+
+    assert set(manager._workers) == {"CAM-DUAL-01:rgb"}
+    worker = manager._workers["CAM-DUAL-01:rgb"]
+    assert worker.derive_thermal is True
+    assert worker.source_url == "rtsp://rgb/stream"
+    assert worker._should_report_status is True
+    await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_replaces_a_worker_when_generated_thermal_is_switched_on() -> None:
+    manager = WorkerManager(_settings())
+    fake = FakeWorker(is_running=True, source_url="rtsp://rgb/stream", idle_seconds=1.0)
+    manager._workers["CAM-DUAL-01:rgb"] = fake  # already running, but not deriving
+    config = _dual_config()
+    config["thermalSourceUrl"] = "derived:rgb"
+    manager._fetch_camera_configs = AsyncMock(return_value=[config])
+
+    await manager._reconcile()
+
+    assert fake.stop_called is True
+    assert manager._workers["CAM-DUAL-01:rgb"].derive_thermal is True
+    await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stops_the_thermal_worker_when_a_camera_switches_to_generated_thermal() -> None:
+    manager = WorkerManager(_settings())
+    old_thermal = FakeWorker(is_running=True, source_url="rtsp://thermal/stream", idle_seconds=1.0)
+    manager._workers["CAM-DUAL-01:thermal"] = old_thermal
+    config = _dual_config()
+    config["thermalSourceUrl"] = "derived:rgb"
+    manager._fetch_camera_configs = AsyncMock(return_value=[config])
+
+    await manager._reconcile()
+
+    assert old_thermal.stop_called is True
+    assert "CAM-DUAL-01:thermal" not in manager._workers
     await manager.stop()

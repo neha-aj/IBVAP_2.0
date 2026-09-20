@@ -3,6 +3,7 @@ import uuid
 
 from redis.asyncio import Redis
 
+from ibvap_common.derived_thermal import DERIVED_THERMAL_SOURCE, is_derived_thermal
 from ibvap_common.errors import ApiError, ConflictError, NotFoundError
 from ibvap_common.redis_pubsub import publish_event
 
@@ -191,6 +192,37 @@ class CameraService:
             camera.thermal_source_url = stored_path
         else:
             camera.source_url = stored_path
+        camera = await self._cameras.update(camera)
+        return _to_detail(camera)
+
+    async def enable_derived_thermal(self, external_id: str) -> CameraDetail:
+        """Gives a video-file camera a thermal view rendered from its own RGB
+        video (no separate thermal upload). The camera becomes a 'dual' one
+        whose thermal source is the DERIVED_THERMAL_SOURCE marker -- ingestion
+        then renders the thermal preview from each frame and detection runs
+        on both views of that frame, counting each object once."""
+        camera = await self._cameras.get_by_external_id(external_id)
+        if camera is None:
+            raise NotFoundError(f"No camera with id {external_id}")
+        if camera.type not in ("file", "dual"):
+            raise ConflictError(f"Camera '{external_id}' is type '{camera.type}'; only video-file cameras can generate a thermal view")
+        if not camera.source_url:
+            raise ConflictError(f"Camera '{external_id}' has no video uploaded yet")
+        if camera.type == "dual" and camera.thermal_source_url and not is_derived_thermal(camera.thermal_source_url):
+            raise ConflictError(f"Camera '{external_id}' already has its own thermal video")
+        camera.type = "dual"
+        camera.thermal_source_url = DERIVED_THERMAL_SOURCE
+        camera = await self._cameras.update(camera)
+        return _to_detail(camera)
+
+    async def disable_derived_thermal(self, external_id: str) -> CameraDetail:
+        camera = await self._cameras.get_by_external_id(external_id)
+        if camera is None:
+            raise NotFoundError(f"No camera with id {external_id}")
+        if not (camera.type == "dual" and is_derived_thermal(camera.thermal_source_url)):
+            raise ConflictError(f"Camera '{external_id}' has no generated thermal view")
+        camera.type = "file"
+        camera.thermal_source_url = None
         camera = await self._cameras.update(camera)
         return _to_detail(camera)
 

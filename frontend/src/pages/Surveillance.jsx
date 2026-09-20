@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState } from "react";
+import { useMemo, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { UserRound, CarFront } from "lucide-react";
 import PageHeader from "../components/layout/PageHeader";
@@ -16,10 +16,28 @@ import { usePausedCameras } from "../hooks/usePausedCameras";
 export default function Surveillance() {
   const { cameras } = useCameras();
   const cameraIds = useMemo(() => cameras.map((c) => c.id), [cameras]);
-  const { detections } = useDetections(cameraIds);
+  const { detections: liveDetections } = useDetections(cameraIds);
   const { posesByCamera } = usePoses(cameraIds);
   const dailyCounts = useCameraDailyCounts();
   const { pausedIds, togglePause, error: pauseError, clearError: clearPauseError } = usePausedCameras();
+
+  // A paused camera is no longer analysed, so what it showed at the moment
+  // of pausing is held as-is: any straggling detection that was already in
+  // flight (or the live list timing old boxes out) must not make the
+  // people/vehicle counts drift while the view is frozen.
+  const frozenRef = useRef(new Map());
+  const detections = useMemo(() => {
+    const frozen = frozenRef.current;
+    for (const id of [...frozen.keys()]) if (!pausedIds.has(id)) frozen.delete(id);
+    for (const id of pausedIds) {
+      if (!frozen.has(id)) frozen.set(id, liveDetections.filter((d) => d.cameraId === id));
+    }
+    if (pausedIds.size === 0) return liveDetections;
+    return [
+      ...liveDetections.filter((d) => !pausedIds.has(d.cameraId)),
+      ...[...frozen.values()].flat(),
+    ];
+  }, [liveDetections, pausedIds]);
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");

@@ -5,6 +5,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ibvap_common.auth import TokenPayload, require_role
+from ibvap_common.camera_pause import PAUSED_CAMERAS_KEY
 from ibvap_common.errors import ApiError, NotFoundError
 from ibvap_common.stream_auth import create_resource_token
 
@@ -27,12 +28,6 @@ from app.schemas.detection import DetectionRead
 from app.services.camera_service import CameraService
 
 router = APIRouter(prefix="/api/v1/cameras", tags=["cameras"])
-
-# Redis set of operator-paused camera ids. Ingestion's CameraWorker reads it
-# (same literal, ingestion-service/app/workers/camera_worker.py) and stops
-# publishing/refreshing frames for a paused camera, which silences every
-# downstream analysis service since they only ever act on that frame stream.
-PAUSED_CAMERAS_KEY = "cameras:paused"
 
 
 def get_camera_service(session: AsyncSession = Depends(get_db)) -> CameraService:
@@ -212,6 +207,28 @@ async def delete_camera(
     _user: TokenPayload = Depends(require_role("admin")),
 ) -> None:
     await service.delete_camera(camera_id)
+
+
+@router.post("/{camera_id}/thermal/generate", response_model=CameraDetail)
+async def generate_thermal_view(
+    camera_id: str,
+    service: CameraService = Depends(get_camera_service),
+    _user: TokenPayload = Depends(require_role("admin")),
+) -> CameraDetail:
+    """Adds a thermal view rendered from this camera's own uploaded video --
+    no separate thermal footage needed. It's a simulation (see
+    ibvap_common.thermal_sim), not a real thermal sensor reading. Detection
+    runs on both views of each frame and counts every object once."""
+    return await service.enable_derived_thermal(camera_id)
+
+
+@router.delete("/{camera_id}/thermal/generate", response_model=CameraDetail)
+async def remove_generated_thermal_view(
+    camera_id: str,
+    service: CameraService = Depends(get_camera_service),
+    _user: TokenPayload = Depends(require_role("admin")),
+) -> CameraDetail:
+    return await service.disable_derived_thermal(camera_id)
 
 
 @router.post("/{camera_id}/upload", response_model=CameraDetail)

@@ -16,6 +16,7 @@ export default function CameraViewerModal({
   poses = [],
   streamUrl,
   thermalStreamUrl,
+  thermalIsGenerated = false,
   paused = false,
   onTogglePause,
   onClose,
@@ -110,8 +111,8 @@ export default function CameraViewerModal({
             <ZoomPanViewport className="aspect-video w-full">
               <VideoPlaceholder
                 fill
-                cameraName={showingThermal ? 'THERMAL' : camera.id}
-                detections={showingThermal ? [] : detections}
+                cameraName={showingThermal ? (thermalIsGenerated ? 'THERMAL (SIMULATED)' : 'THERMAL') : camera.id}
+                detections={showingThermal && !thermalIsGenerated ? [] : detections}
                 poses={showingThermal ? [] : poses}
                 streamUrl={showingThermal ? thermalStreamUrl : streamUrl}
                 paused={paused}

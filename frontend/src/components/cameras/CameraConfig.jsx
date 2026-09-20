@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import Badge from "../common/Badge";
+import { hasGeneratedThermal } from "../../utils/thermal";
 
 export default function CameraConfig({
   camera,
@@ -20,8 +21,14 @@ export default function CameraConfig({
   onConfigureDetection,
   onConfigureFence,
   onConfigureCalibration,
+  onGenerateThermal,
+  onRemoveThermal,
+  thermalBusy = false,
 }) {
   if (!camera) return null;
+
+  const generatedThermal = hasGeneratedThermal(camera);
+  const canGenerateThermal = camera.type === "file" && Boolean(onGenerateThermal);
 
   return (  
     <section className="panel mt-5 overflow-hidden">
@@ -104,6 +111,20 @@ export default function CameraConfig({
               value="AI Processing Enabled"
             />
 
+            {(camera.type === "dual" || camera.type === "file") && (
+              <ConfigRow
+                icon={<Cpu size={15} />}
+                label="Thermal View"
+                value={
+                  generatedThermal
+                    ? "Simulated from this video"
+                    : camera.type === "dual"
+                      ? "Separate thermal video"
+                      : "Not enabled"
+                }
+              />
+            )}
+
             <ConfigRow
               icon={<ShieldCheck size={15} />}
               label="Last Active"
@@ -138,6 +159,27 @@ export default function CameraConfig({
           <Gauge size={13} />
           Speed Calibration
         </button>
+
+        {canGenerateThermal && (
+          <button
+            onClick={onGenerateThermal}
+            disabled={thermalBusy || !camera.status || camera.status === "offline"}
+            title="Render a simulated thermal view from this camera's video and analyse it too"
+            className="border border-line bg-panelSecondary px-3 py-2 text-xs font-semibold text-secondary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {thermalBusy ? "Working..." : "Generate Thermal View"}
+          </button>
+        )}
+
+        {generatedThermal && onRemoveThermal && (
+          <button
+            onClick={onRemoveThermal}
+            disabled={thermalBusy}
+            className="border border-line bg-panelSecondary px-3 py-2 text-xs font-semibold text-secondary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {thermalBusy ? "Working..." : "Remove Thermal View"}
+          </button>
+        )}
 
         <button
           onClick={onDelete}

@@ -38,7 +38,8 @@ class FramePublisher:
         await self._redis.xtrim(self._stream_key(camera_id, modality), maxlen=0)
 
     async def publish(
-        self, camera_id: str, frame: np.ndarray, *, loop_generation: int = 0, modality: str | None = None
+        self, camera_id: str, frame: np.ndarray, *, loop_generation: int = 0, modality: str | None = None,
+        derived_thermal: bool = False,
     ) -> None:
         ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality])
         if not ok:
@@ -51,10 +52,15 @@ class FramePublisher:
         # fusion step can still associate both streams' detections with the
         # one logical camera.
         stream_key = self._stream_key(camera_id, modality)
+        # Set only for a camera whose thermal view is rendered from this same
+        # frame; tells detection to also analyse that rendering. Absent (the
+        # field isn't even written) for every other camera.
+        derived_fields = {"derivedThermal": "1"} if derived_thermal else {}
         await xadd_capped(
             self._redis,
             stream_key,
             {
+                **derived_fields,
                 "cameraId": camera_id,
                 "timestamp": str(time.time()),
                 "jpeg": encoded.tobytes(),
