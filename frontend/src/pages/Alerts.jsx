@@ -31,7 +31,7 @@ export default function Alerts() {
   const filteredAlerts = useMemo(() => {
     const query = search.toLowerCase();
 
-    return alerts.filter((alert) => {
+    const filtered = alerts.filter((alert) => {
       const matchesSearch =
         alert.id.toLowerCase().includes(query) ||
         alert.type.toLowerCase().includes(query) ||
@@ -46,7 +46,20 @@ export default function Alerts() {
 
       return matchesSearch && matchesSeverity && matchesStatus;
     });
-  }, [alerts, search, severity, status]);
+
+    // Keep the open alert's card+details visible even if a live update
+    // (e.g. clicking Acknowledge/Resolve while a status filter is active,
+    // or a WS `alert.updated` push changing its severity) makes it stop
+    // matching the current filter -- otherwise the detail panel you're
+    // looking at vanishes the instant its own status changes, with no
+    // explanation. It still disappears once the underlying alert is
+    // genuinely gone from `alerts`, just not merely filtered out.
+    if (selectedAlert && !filtered.some((a) => a.id === selectedAlert.id)) {
+      const stillExists = alerts.find((a) => a.id === selectedAlert.id);
+      if (stillExists) return [stillExists, ...filtered];
+    }
+    return filtered;
+  }, [alerts, search, severity, status, selectedAlert]);
 
   async function updateSelectedAlertStatus(nextStatus) {
     if (!selectedAlert) return;

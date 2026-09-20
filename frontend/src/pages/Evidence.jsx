@@ -43,7 +43,7 @@ export default function Evidence() {
 
   const filteredEvidence = useMemo(() => {
     const query = search.toLowerCase();
-    return evidence.filter((item) => {
+    const filtered = evidence.filter((item) => {
       const matchesSearch =
         !query ||
         item.cameraName.toLowerCase().includes(query) ||
@@ -54,7 +54,17 @@ export default function Evidence() {
 
       return matchesSearch && matchesSeverity;
     });
-  }, [evidence, search, severity]);
+
+    // Same reasoning as Alerts.jsx's own filteredAlerts: keep the open
+    // item's card+details visible even if changing the filter (or a
+    // refresh updating its fields) makes it stop matching -- it should
+    // only disappear once it's genuinely gone from `evidence`.
+    if (selectedEvidence && !filtered.some((item) => item.id === selectedEvidence.id)) {
+      const stillExists = evidence.find((item) => item.id === selectedEvidence.id);
+      if (stillExists) return [stillExists, ...filtered];
+    }
+    return filtered;
+  }, [evidence, search, severity, selectedEvidence]);
 
   return (
     <div>
