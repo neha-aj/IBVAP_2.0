@@ -116,6 +116,12 @@ class Settings(CommonSettings):
     # sitting there 3+ minutes later with nobody nearby is worth a look.
     abandoned_object_seconds_threshold: int = 180
     abandoned_object_proximity_threshold: float = 15.0
+    # A camera that emits no track events for longer than this while tracks
+    # were alive (an operator pause, or a stalled pipeline) has the gap
+    # excluded from those tracks' loitering/abandoned-object dwell time --
+    # see RuleEngine._credit_stream_gap. Well above normal inter-frame gaps
+    # (~0.2s at inference_fps=5) so ordinary jitter never triggers it.
+    stream_gap_seconds: int = 10
 
 
 @lru_cache

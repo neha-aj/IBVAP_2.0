@@ -23,6 +23,20 @@ class FramePublisher:
         self._jpeg_quality = jpeg_quality
         self._maxlen = maxlen
 
+    @staticmethod
+    def _stream_key(camera_id: str, modality: str | None) -> str:
+        return f"cam:{camera_id}:frames" if modality is None else f"cam:{camera_id}:frames:{modality}"
+
+    async def discard_backlog(self, camera_id: str, *, modality: str | None = None) -> None:
+        """Drops every frame still queued on this camera's stream. Called
+        when an operator pauses the camera: consumers only ever read new
+        entries (`>`), so this just deletes work they haven't started -- the
+        same thing the `maxlen` cap already does on every publish. Without
+        it, an analysis service that's behind real time would keep working
+        through up to `maxlen` queued frames after the pause, i.e. keep
+        "analysing" a camera the operator believes is stopped."""
+        await self._redis.xtrim(self._stream_key(camera_id, modality), maxlen=0)
+
     async def publish(
         self, camera_id: str, frame: np.ndarray, *, loop_generation: int = 0, modality: str | None = None
     ) -> None:
@@ -36,7 +50,7 @@ class FramePublisher:
         # below stays the real camera id either way, so detection-service's
         # fusion step can still associate both streams' detections with the
         # one logical camera.
-        stream_key = f"cam:{camera_id}:frames" if modality is None else f"cam:{camera_id}:frames:{modality}"
+        stream_key = self._stream_key(camera_id, modality)
         await xadd_capped(
             self._redis,
             stream_key,

@@ -18,12 +18,23 @@ from ibvap_common.logging import get_logger
 
 from app.capture.base import FrameSource
 from app.capture.factory import build_frame_source
+from app.capture.file_source import FileFrameSource
 from app.core.config import Settings
 from app.preview.frame_cache import frame_cache
 from app.preview.frame_ring_buffer import frame_ring_buffer
 from app.streaming.frame_publisher import FramePublisher
 
 logger = get_logger(__name__)
+
+# Set of camera ids an operator has paused from the Surveillance page
+# (camera-service's POST /cameras/{id}/pause|resume writes it; this worker
+# only ever reads it). Kept in Redis rather than in this process so a pause
+# survives an ingestion restart and camera-service doesn't need a direct
+# line to this service.
+PAUSED_CAMERAS_KEY = "cameras:paused"
+# How often a paused/unpaused worker re-checks that set -- a resume takes
+# effect within this long, without a Redis round-trip on every captured frame.
+_PAUSE_POLL_SECONDS = 0.5
 
 
 class CameraWorker:
@@ -77,6 +88,29 @@ class CameraWorker:
         # `seconds_since_last_frame` before it's had any chance to read a
         # frame at all.
         self._last_frame_at = time.monotonic()
+        self._paused = False
+        self._pause_checked_at = 0.0
+
+    async def _is_paused(self) -> bool:
+        now = time.monotonic()
+        if now - self._pause_checked_at >= _PAUSE_POLL_SECONDS:
+            self._pause_checked_at = now
+            try:
+                paused = bool(await self._redis.sismember(PAUSED_CAMERAS_KEY, self.camera_id))
+            except Exception as exc:  # noqa: BLE001 -- a Redis blip must not stop capture; keep the last known state
+                logger.warning("pause_state_check_failed", camera_id=self.camera_id, error=str(exc))
+                return self._paused
+            if paused != self._paused:
+                logger.info("camera_pause_changed", camera_id=self.camera_id, paused=paused)
+                if paused:
+                    # Frames already queued for analysis would otherwise
+                    # keep being processed for a while after the pause.
+                    try:
+                        await self._publisher.discard_backlog(self.camera_id, modality=self._modality)
+                    except Exception as exc:  # noqa: BLE001 -- best-effort; the pause itself still takes effect
+                        logger.warning("pause_backlog_discard_failed", camera_id=self.camera_id, error=str(exc))
+            self._paused = paused
+        return self._paused
 
     @property
     def is_running(self) -> bool:
@@ -168,6 +202,24 @@ class CameraWorker:
 
         while not self._stop_requested:
             loop_start = time.monotonic()
+
+            # Paused by an operator: publish nothing to the frame stream (so
+            # detection/tracking/fire/tamper/pose/etc. all go quiet, they
+            # only ever act on frames from it) and leave the preview cache
+            # untouched (so the live tile freezes on the last frame). A file
+            # source is simply not read, so playback resumes exactly where it
+            # stopped; a live source is still drained so resume shows "now",
+            # not a stale backlog. Refreshing `_last_frame_at` keeps
+            # WorkerManager from mistaking a paused worker for a hung one.
+            if await self._is_paused():
+                if not isinstance(source, FileFrameSource):
+                    await asyncio.to_thread(source.read)
+                self._last_frame_at = time.monotonic()
+                frames_in_window = 0
+                window_start = self._last_frame_at
+                await asyncio.sleep(min_frame_interval)
+                continue
+
             frame = await asyncio.to_thread(source.read)
             now = time.monotonic()
 

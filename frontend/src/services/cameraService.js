@@ -13,6 +13,12 @@ export const cameraService = {
   // modality: undefined (default RGB) or "thermal" -- only meaningful for a
   // 'dual' camera's second stream (M11); every other camera type omits it.
   getStream: (id, modality) => api.get(`/cameras/${id}/stream${modality ? `?modality=${modality}` : ""}`),
+  // Pause = freeze the live view AND stop all analysis for that camera (the
+  // backend stops feeding its frames into the detection pipeline). Needs the
+  // operator role or higher.
+  getPaused: () => api.get("/cameras/paused"),
+  pause: (id) => api.post(`/cameras/${id}/pause`),
+  resume: (id) => api.post(`/cameras/${id}/resume`),
   getCurrentDetections: (id) => api.get(`/cameras/${id}/detections/current`),
   getHealth: (id) => api.get(`/cameras/${id}/health`),
   create: (payload) => api.post("/cameras", payload),

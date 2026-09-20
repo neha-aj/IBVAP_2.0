@@ -127,11 +127,38 @@ class RuleEngine:
         self._displacement_history: dict[tuple[str, str], list[float]] = {}
         self._fighting_fired: set[tuple[str, frozenset[str]]] = set()
         self._abandoned_fired: set[tuple[str, str]] = set()
+        # Stream-gap compensation: when a camera is paused by an operator (or
+        # its pipeline stalls) its frames stop, but ByteTrack keeps the same
+        # track ids alive across the gap -- so on resume, a track's wall-clock
+        # dwell (`first_seen` -> now) would include the whole paused period
+        # and fire a bogus Loitering/Abandoned Object alert. Each camera's
+        # last event time is remembered; a gap longer than
+        # `stream_gap_seconds` is credited back to every live track of that
+        # camera as an in-memory dwell offset (see `_dwell_start`).
+        self._last_event_at: dict[str, dt.datetime] = {}
+        self._dwell_offset: dict[tuple[str, str], dt.timedelta] = {}
+
+    def _credit_stream_gap(self, camera_id: str, now: dt.datetime) -> None:
+        last = self._last_event_at.get(camera_id)
+        self._last_event_at[camera_id] = now
+        if last is None:
+            return
+        gap = now - last
+        if gap.total_seconds() <= self._settings.stream_gap_seconds:
+            return
+        for cam_id, ref in self._last_bbox:
+            if cam_id == camera_id:
+                key = (cam_id, ref)
+                self._dwell_offset[key] = self._dwell_offset.get(key, dt.timedelta()) + gap
+
+    def _dwell_start(self, key: tuple[str, str], first_seen: dt.datetime) -> dt.datetime:
+        return first_seen + self._dwell_offset.get(key, dt.timedelta())
 
     async def handle_track_event(
         self, event: TrackEvent, track_repo: TrackRepository, now: dt.datetime
     ) -> list[EventDraft]:
         drafts: list[EventDraft] = []
+        self._credit_stream_gap(event.camera_id, now)
         # `defaultdict` (not a plain {"person":..., "vehicle":...} literal)
         # so any object_type -- "animal" (M21), and now "bag" (Abandoned
         # Object Detection) -- can be counted without a KeyError; only
@@ -195,7 +222,8 @@ class RuleEngine:
                 await track_repo.touch(track, now)
                 key = (event.camera_id, resolved_ref)
                 if key not in self._loitering_fired and loitering.has_exceeded_dwell_time(
-                    track.first_seen, now, threshold_seconds=self._settings.loitering_seconds_threshold
+                    self._dwell_start(key, track.first_seen), now,
+                    threshold_seconds=self._settings.loitering_seconds_threshold
                 ):
                     self._loitering_fired.add(key)
                     drafts.append(
@@ -219,7 +247,8 @@ class RuleEngine:
                 if (
                     event.object_type == "bag" and event.bbox is not None and key not in self._abandoned_fired
                     and loitering.has_exceeded_dwell_time(
-                        track.first_seen, now, threshold_seconds=self._settings.abandoned_object_seconds_threshold
+                        self._dwell_start(key, track.first_seen), now,
+                        threshold_seconds=self._settings.abandoned_object_seconds_threshold
                     )
                 ):
                     nearby_people = [
@@ -260,6 +289,7 @@ class RuleEngine:
             self._person_last_bbox.pop((event.camera_id, resolved_ref), None)
             self._displacement_history.pop((event.camera_id, resolved_ref), None)
             self._abandoned_fired.discard((event.camera_id, resolved_ref))
+            self._dwell_offset.pop((event.camera_id, resolved_ref), None)
             self._fighting_fired = {
                 pair_key for pair_key in self._fighting_fired
                 if not (pair_key[0] == event.camera_id and resolved_ref in pair_key[1])

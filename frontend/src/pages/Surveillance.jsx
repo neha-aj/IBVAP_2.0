@@ -11,6 +11,7 @@ import { useCameras } from "../hooks/useCameras";
 import { useDetections } from "../hooks/useDetections";
 import { usePoses } from "../hooks/usePoses";
 import { useCameraDailyCounts } from "../hooks/useCameraDailyCounts";
+import { usePausedCameras } from "../hooks/usePausedCameras";
 
 export default function Surveillance() {
   const { cameras } = useCameras();
@@ -18,6 +19,7 @@ export default function Surveillance() {
   const { detections } = useDetections(cameraIds);
   const { posesByCamera } = usePoses(cameraIds);
   const dailyCounts = useCameraDailyCounts();
+  const { pausedIds, togglePause, error: pauseError, clearError: clearPauseError } = usePausedCameras();
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -105,6 +107,13 @@ export default function Surveillance() {
           </div>
         </div>
 
+        {pauseError && (
+          <div role="alert" className="mb-3 flex items-center justify-between border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+            <span>{pauseError}</span>
+            <button type="button" onClick={clearPauseError} className="ml-3 font-semibold hover:text-primary">Dismiss</button>
+          </div>
+        )}
+
         <CameraGrid
           cameras={filteredCameras}
           detections={detections}
@@ -113,6 +122,8 @@ export default function Surveillance() {
           selectedCamera={selectedCamera}
           onSelect={setSelectedCamera}
           view={view}
+          pausedIds={pausedIds}
+          onTogglePause={togglePause}
         />
       </div>
 

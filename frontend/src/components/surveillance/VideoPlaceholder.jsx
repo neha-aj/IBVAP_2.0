@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { CameraOff } from 'lucide-react';
+import { CameraOff, Pause } from 'lucide-react';
 import DetectionOverlay from './DetectionOverlay';
 
-export default function VideoPlaceholder({ cameraName = 'CAMERA', detections = [], poses = [], streamUrl = null, className = '', fill = false }) {
+export default function VideoPlaceholder({ cameraName = 'CAMERA', detections = [], poses = [], streamUrl = null, className = '', fill = false, paused = false }) {
   const [streamFailed, setStreamFailed] = useState(false);
   const showStream = Boolean(streamUrl) && !streamFailed;
 
@@ -19,7 +19,12 @@ export default function VideoPlaceholder({ cameraName = 'CAMERA', detections = [
         <div className="absolute inset-0 opacity-30" style={{ backgroundImage: 'linear-gradient(#202A36 1px, transparent 1px), linear-gradient(90deg, #202A36 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
       )}
       <div className="absolute left-3 top-3 flex items-center gap-2 text-[10px] font-semibold tracking-wider text-primary">
-        <span className="h-1.5 w-1.5 rounded-full bg-success" />LIVE <span className="text-secondary">{cameraName}</span>
+        {paused ? (
+          <span className="h-1.5 w-1.5 rounded-full bg-warning" />
+        ) : (
+          <span className="h-1.5 w-1.5 rounded-full bg-success" />
+        )}
+        {paused ? 'PAUSED' : 'LIVE'} <span className="text-secondary">{cameraName}</span>
       </div>
       {!showStream && (
         <div className="absolute inset-0 grid place-items-center text-center">
@@ -32,9 +37,18 @@ export default function VideoPlaceholder({ cameraName = 'CAMERA', detections = [
           </div>
         </div>
       )}
-      <DetectionOverlay detections={detections} poses={poses} />
+      {/* A paused camera isn't being analysed, so any boxes still held from
+          before the pause would be stale -- show none. */}
+      {!paused && <DetectionOverlay detections={detections} poses={poses} />}
+      {paused && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center bg-black/25">
+          <div className="flex items-center gap-2 border border-warning/50 bg-ink/80 px-3 py-1.5 text-[11px] font-semibold tracking-[.14em] text-warning">
+            <Pause size={13} /> PAUSED · ANALYSIS OFF
+          </div>
+        </div>
+      )}
       <div className="absolute bottom-3 left-3 font-mono text-[10px] text-secondary">
-        LIVE · {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        {paused ? 'PAUSED' : `LIVE · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`}
       </div>
     </div>
   );

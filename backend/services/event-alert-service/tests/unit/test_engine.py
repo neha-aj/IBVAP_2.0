@@ -126,8 +126,16 @@ async def test_loitering_fires_once_after_threshold() -> None:
     drafts = await engine.handle_track_event(_track_event("track.updated", "1"), repo, still_early)
     assert not any(d.event_type == "Loitering Detected" for d in drafts)
 
+    # Continuous 5s-apart updates (as the tracker really emits them) rather
+    # than one 26s jump -- a jump that long is indistinguishable from a
+    # paused stream, which the engine deliberately doesn't count as dwell.
+    drafts = []
+    for seconds in range(10, 32, 5):
+        drafts += await engine.handle_track_event(
+            _track_event("track.updated", "1"), repo, start_time + dt.timedelta(seconds=seconds)
+        )
     past_threshold = start_time + dt.timedelta(seconds=31)
-    drafts = await engine.handle_track_event(_track_event("track.updated", "1"), repo, past_threshold)
+    drafts += await engine.handle_track_event(_track_event("track.updated", "1"), repo, past_threshold)
     assert any(d.event_type == "Loitering Detected" for d in drafts)
 
     # Must not re-fire on the next update for the same still-loitering track.
@@ -756,10 +764,11 @@ async def test_abandoned_object_fires_when_bag_idle_with_no_person_nearby() -> N
     now = dt.datetime.now(dt.UTC)
 
     await engine.handle_track_event(_track_event("track.started", "bag-1", "bag", x=20.0, y=20.0), repo, now)
-    later = now + dt.timedelta(seconds=200)
-    drafts = await engine.handle_track_event(
-        _track_event("track.updated", "bag-1", "bag", x=20.0, y=20.0), repo, later
-    )
+    drafts = []
+    for seconds in range(5, 201, 5):  # continuous updates, not one jump -- see the loitering test's note
+        drafts += await engine.handle_track_event(
+            _track_event("track.updated", "bag-1", "bag", x=20.0, y=20.0), repo, now + dt.timedelta(seconds=seconds)
+        )
     assert any(d.event_type == "Abandoned Object Detected" and d.severity == "high" for d in drafts)
 
 
@@ -793,3 +802,57 @@ async def test_abandoned_object_does_not_fire_before_threshold() -> None:
         _track_event("track.updated", "bag-1", "bag", x=20.0, y=20.0), repo, soon
     )
     assert not any(d.event_type == "Abandoned Object Detected" for d in drafts)
+
+
+@pytest.mark.asyncio
+async def test_paused_stream_gap_does_not_count_toward_loitering() -> None:
+    """An operator pause freezes frames but ByteTrack keeps the same track id
+    alive -- the wall-clock gap on resume must not read as the person having
+    loitered through it."""
+    engine = RuleEngine(_settings(stream_gap_seconds=10), _no_zones)
+    repo = FakeTrackRepo()
+    start = dt.datetime.now(dt.UTC)
+    await engine.handle_track_event(_track_event("track.started", "1"), repo, start)
+    await engine.handle_track_event(_track_event("track.updated", "1"), repo, start + dt.timedelta(seconds=5))
+
+    # Paused for 10 minutes, then the same track resumes.
+    resumed = start + dt.timedelta(seconds=605)
+    drafts = await engine.handle_track_event(_track_event("track.updated", "1"), repo, resumed)
+    assert not any(d.event_type == "Loitering Detected" for d in drafts)
+
+
+@pytest.mark.asyncio
+async def test_loitering_still_fires_after_a_pause_once_real_dwell_accumulates() -> None:
+    engine = RuleEngine(_settings(stream_gap_seconds=10, loitering_seconds_threshold=30), _no_zones)
+    repo = FakeTrackRepo()
+    start = dt.datetime.now(dt.UTC)
+    await engine.handle_track_event(_track_event("track.started", "1"), repo, start)
+    await engine.handle_track_event(_track_event("track.updated", "1"), repo, start + dt.timedelta(seconds=5))
+
+    resumed = start + dt.timedelta(seconds=605)
+    await engine.handle_track_event(_track_event("track.updated", "1"), repo, resumed)
+    drafts = []
+    for seconds in range(5, 41, 5):  # 40 real seconds of dwell after resuming
+        drafts += await engine.handle_track_event(
+            _track_event("track.updated", "1"), repo, resumed + dt.timedelta(seconds=seconds)
+        )
+    assert any(d.event_type == "Loitering Detected" for d in drafts)
+
+
+@pytest.mark.asyncio
+async def test_track_started_after_a_gap_is_not_offset() -> None:
+    """A track born after the pause has no pre-pause history to discount."""
+    engine = RuleEngine(_settings(stream_gap_seconds=10, loitering_seconds_threshold=30), _no_zones)
+    repo = FakeTrackRepo()
+    start = dt.datetime.now(dt.UTC)
+    await engine.handle_track_event(_track_event("track.started", "1"), repo, start)
+    await engine.handle_track_event(_track_event("track.lost", "1"), repo, start + dt.timedelta(seconds=1))
+
+    later = start + dt.timedelta(seconds=600)
+    await engine.handle_track_event(_track_event("track.started", "2"), repo, later)
+    drafts = []
+    for seconds in range(5, 36, 5):
+        drafts += await engine.handle_track_event(
+            _track_event("track.updated", "2"), repo, later + dt.timedelta(seconds=seconds)
+        )
+    assert any(d.event_type == "Loitering Detected" for d in drafts)

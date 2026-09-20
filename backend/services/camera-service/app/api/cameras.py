@@ -28,6 +28,12 @@ from app.services.camera_service import CameraService
 
 router = APIRouter(prefix="/api/v1/cameras", tags=["cameras"])
 
+# Redis set of operator-paused camera ids. Ingestion's CameraWorker reads it
+# (same literal, ingestion-service/app/workers/camera_worker.py) and stops
+# publishing/refreshing frames for a paused camera, which silences every
+# downstream analysis service since they only ever act on that frame stream.
+PAUSED_CAMERAS_KEY = "cameras:paused"
+
 
 def get_camera_service(session: AsyncSession = Depends(get_db)) -> CameraService:
     return CameraService(CameraRepository(session), SectorRepository(session))
@@ -62,6 +68,19 @@ async def status_summary(
     _user: TokenPayload = Depends(require_role("viewer")),
 ) -> CameraStatusSummary:
     return await service.status_summary()
+
+
+@router.get("/paused", response_model=list[str])
+async def list_paused_cameras(
+    redis_client: Redis = Depends(get_redis_client),
+    _user: TokenPayload = Depends(require_role("viewer")),
+) -> list[str]:
+    """Ids of every camera currently paused -- lets the Surveillance page show
+    the right state after a reload (or from a second browser tab). Declared
+    before `/{camera_id}` so "paused" isn't read as a camera id."""
+    members = await redis_client.smembers(PAUSED_CAMERAS_KEY)
+    # The shared Redis client is decode_responses=False, so members are bytes.
+    return sorted(m.decode() if isinstance(m, bytes) else m for m in members)
 
 
 @router.get("/{camera_id}", response_model=CameraDetail)
@@ -138,6 +157,33 @@ async def get_current_detections(
     if raw is None:
         return []
     return [DetectionRead(**item) for item in json.loads(raw)]
+
+
+@router.post("/{camera_id}/pause", response_model=dict)
+async def pause_camera(
+    camera_id: str,
+    service: CameraService = Depends(get_camera_service),
+    redis_client: Redis = Depends(get_redis_client),
+    _user: TokenPayload = Depends(require_role("operator")),
+) -> dict:
+    """Freezes the live view and stops all analysis for this camera: no
+    frames reach detection/tracking/fire-smoke/tamper/pose/etc. until it's
+    resumed. Idempotent."""
+    await service.get_camera(camera_id)  # 404s if unknown
+    await redis_client.sadd(PAUSED_CAMERAS_KEY, camera_id)
+    return {"cameraId": camera_id, "paused": True}
+
+
+@router.post("/{camera_id}/resume", response_model=dict)
+async def resume_camera(
+    camera_id: str,
+    service: CameraService = Depends(get_camera_service),
+    redis_client: Redis = Depends(get_redis_client),
+    _user: TokenPayload = Depends(require_role("operator")),
+) -> dict:
+    await service.get_camera(camera_id)  # 404s if unknown
+    await redis_client.srem(PAUSED_CAMERAS_KEY, camera_id)
+    return {"cameraId": camera_id, "paused": False}
 
 
 @router.post("", response_model=CameraDetail, status_code=201)
