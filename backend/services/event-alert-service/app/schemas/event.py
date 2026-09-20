@@ -30,6 +30,9 @@ class EventRead(_CamelModel):
 
     id: str
     time: dt.datetime
+    # Lets the Events page filter live-pushed events by camera (the picker
+    # works on ids, and a camera's display name isn't guaranteed unique).
+    camera_id: str
     camera_name: str
     event: str  # human label, e.g. "Fence Intrusion" -- DB column `event_type`
     object_type: str | None
@@ -59,6 +62,26 @@ class EventUpdate(_CamelModel):
     status: EventStatus
 
 
+class CameraOption(_CamelModel):
+    id: str
+    name: str
+    count: int
+
+
+class ValueCount(_CamelModel):
+    value: str
+    count: int
+
+
+class EventFilterOptions(_CamelModel):
+    """What the Events page's dropdowns can offer: only values that actually
+    occur in the stored events, each with how many events it matches."""
+
+    cameras: list[CameraOption]
+    event_types: list[ValueCount]
+    severities: list[ValueCount]
+
+
 class EventListResponse(_CamelModel):
     items: list[EventRead]
     total: int
@@ -80,6 +103,7 @@ def to_event_read(event: Event, settings: Settings | None = None) -> EventRead:
     return EventRead(
         id=str(event.id),
         time=event.created_at,
+        camera_id=event.camera_id,
         camera_name=event.camera_name,
         event=event.event_type,
         object_type=event.object_type,
@@ -112,7 +136,7 @@ def to_event_detail(event: Event, settings: Settings) -> EventDetail:
         # it in the spread here would pass it twice (once from `**`, once
         # explicitly) and error. Re-declared below instead, only for
         # readability/parity with snapshot_url's own explicit build.
-        **base.model_dump(exclude={"recording_url"}),
+        **base.model_dump(exclude={"recording_url", "camera_id"}),
         camera_id=event.camera_id,
         snapshot_url=build_resource_url(
             path=f"/media/snapshots/{event.snapshot_id}", resource=str(event.snapshot_id), settings=settings

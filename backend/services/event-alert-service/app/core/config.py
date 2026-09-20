@@ -80,6 +80,13 @@ class Settings(CommonSettings):
     # best-effort (SAS §11 graceful degradation), never blocking the event
     # itself from being persisted.
     snapshot_capture_timeout_seconds: float = 5.0
+    # Event types that never get a snapshot. "Direction Observed" is an
+    # informational per-track heading sample emitted every few seconds per
+    # moving object -- it was ~84% of all events, and saving an image for each
+    # (plus two internal HTTP calls apiece) was what filled the disk. Its
+    # value is the `direction` field (Analytics reads that), not a picture.
+    # Every other event type, including real alerts, still gets one.
+    snapshot_skip_event_types: tuple[str, ...] = ("Direction Observed",)
 
     # --- Recording clip capture (Phase 2 M23) ---
     # Critical-severity events only (doc09/doc08's own "critical-severity

@@ -7,6 +7,7 @@ from ibvap_common.logging import configure_logging, get_logger, install_correlat
 from ibvap_common.metrics import install_metrics
 
 from app.api import alerts as alert_routes
+from app.api import data_management as data_management_routes
 from app.api import events as event_routes
 from app.api import health as health_routes
 from app.api import internal_events as internal_event_routes
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     install_metrics(app, settings.service_name)
     install_error_handlers(app)
     app.include_router(event_routes.router)
+    app.include_router(data_management_routes.router)
     app.include_router(alert_routes.router)
     app.include_router(internal_event_routes.router)
     app.include_router(health_routes.router)

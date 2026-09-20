@@ -33,6 +33,10 @@ logger = get_logger(__name__)
 # configured floor's rank.
 _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
+# Same default as `Settings.snapshot_skip_event_types`, for callers/tests that
+# construct a publisher without a full Settings.
+_DEFAULT_SNAPSHOT_SKIP_EVENT_TYPES = frozenset({"Direction Observed"})
+
 
 class PubSubPublisher:
     def __init__(
@@ -55,6 +59,9 @@ class PubSubPublisher:
         # persistence, not the alert threshold, don't need to construct a
         # full Settings (whose other fields have no defaults) just to get one.
         self._alert_min_rank = _SEVERITY_RANK.get(settings.alert_min_severity, 1) if settings else 1
+        self._snapshot_skip_event_types = (
+            frozenset(settings.snapshot_skip_event_types) if settings else _DEFAULT_SNAPSHOT_SKIP_EVENT_TYPES
+        )
         # Phase 2 M23: holds references to in-flight background recording
         # captures so asyncio doesn't garbage-collect a task nothing else
         # is awaiting -- each entry discards itself via `add_done_callback`.
@@ -81,7 +88,13 @@ class PubSubPublisher:
 
         # Best-effort (SAS §5.4 step 4, §11): a failed/skipped capture must
         # never block the event itself, which is already persisted above.
-        captured = await self._snapshot_client.capture(camera_id=draft.camera_id, event_id=str(event.id))
+        # Skipped for high-volume informational types (see
+        # `Settings.snapshot_skip_event_types`) -- no image, and no round trip.
+        captured = (
+            None
+            if draft.event_type in self._snapshot_skip_event_types
+            else await self._snapshot_client.capture(camera_id=draft.camera_id, event_id=str(event.id))
+        )
         if captured is not None:
             event = await event_repo.set_snapshot(event, snapshot_id=captured.id, snapshot_url=captured.url)
 

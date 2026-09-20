@@ -7,6 +7,7 @@ from ibvap_common.logging import configure_logging, get_logger, install_correlat
 from ibvap_common.metrics import install_metrics
 
 from app.api import health as health_routes
+from app.api import maintenance as maintenance_routes
 from app.api import recordings as recording_routes
 from app.api import snapshots as snapshot_routes
 from app.api import sources as source_routes
@@ -32,6 +33,7 @@ def create_app() -> FastAPI:
     app.include_router(snapshot_routes.router)
     app.include_router(recording_routes.router)
     app.include_router(source_routes.router)
+    app.include_router(maintenance_routes.router)
     app.include_router(health_routes.router)
     return app
 

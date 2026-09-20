@@ -40,6 +40,27 @@ class EventRepository:
         await self._session.refresh(event)
         return event
 
+    async def filter_options(self) -> dict[str, list[tuple]]:
+        """Distinct cameras / event types / severities present in the stored
+        events, with counts -- the Events page's dropdown choices. Backed by
+        the existing single-column indexes."""
+        cameras = (
+            await self._session.execute(
+                select(Event.camera_id, func.max(Event.camera_name), func.count())
+                .group_by(Event.camera_id)
+                .order_by(func.max(Event.camera_name))
+            )
+        ).all()
+        event_types = (
+            await self._session.execute(
+                select(Event.event_type, func.count()).group_by(Event.event_type).order_by(Event.event_type)
+            )
+        ).all()
+        severities = (
+            await self._session.execute(select(Event.severity, func.count()).group_by(Event.severity))
+        ).all()
+        return {"cameras": list(cameras), "event_types": list(event_types), "severities": list(severities)}
+
     async def list_paginated(
         self,
         *,
