@@ -17,7 +17,7 @@ from prometheus_client import Counter
 from ibvap_common.camera_pause import PAUSED_CAMERAS_KEY
 from ibvap_common.logging import correlation_id_context, get_logger
 from ibvap_common.redis_streams import ensure_consumer_group, xack, xread_group
-from ibvap_common.thermal_sim import simulate_thermal
+from ibvap_common.thermal_sim import simulate_thermal, to_detection_view
 
 from app.inference.base import InferenceEngine
 from app.inference.fusion_merger import FusionSettings, merge_detections
@@ -138,7 +138,7 @@ class FrameConsumer:
                         )
                         if fields.get(b"derivedThermal") and self._derived_thermal_fusion is not None:
                             detections = await self._detect_with_derived_thermal(
-                                frame, detections, width=width, height=height
+                                frame, detections, thermal_jpeg=fields.get(b"thermalJpeg")
                             )
                         # Inference on CPU can take seconds; if the operator paused
                         # meanwhile, this frame's result is stale by the time it's
@@ -165,17 +165,27 @@ class FrameConsumer:
             return False
 
     async def _detect_with_derived_thermal(
-        self, frame: np.ndarray, rgb_detections: list, *, width: int, height: int
+        self, frame: np.ndarray, rgb_detections: list, *, thermal_jpeg: bytes | None
     ) -> list:
         """Runs detection on the simulated thermal rendering of this same
         frame and fuses it with the RGB result. Both views show the same
         objects in the same places, so the fusion merge treats matching boxes
         as one object (never two) -- a person is counted once no matter how
         many of the two views saw them."""
-        thermal_frame = await asyncio.to_thread(simulate_thermal, frame)
-        raw_thermal = await asyncio.to_thread(self._engine.infer, thermal_frame)
+        # Ingestion renders the thermal view (it tracks motion over time, which a single
+        # frame can't) and ships it with the frame; a frame without one falls back to the
+        # stateless ambient-only rendering.
+        thermal_frame = await asyncio.to_thread(_decode_jpeg, thermal_jpeg) if thermal_jpeg else None
+        if thermal_frame is None:
+            thermal_frame = await asyncio.to_thread(simulate_thermal, frame)
+        # The thermal image can be a different size from the RGB frame (it's capped in width),
+        # and boxes are percentages of their own image.
+        thermal_height, thermal_width = thermal_frame.shape[:2]
+        # Detected on as white-hot greyscale: the same heat data, in a form the model can read.
+        raw_thermal = await asyncio.to_thread(lambda: self._engine.infer(to_detection_view(thermal_frame)))
         thermal_detections = to_detections(
-            camera_id=self.camera_id, raw_detections=raw_thermal, frame_width=width, frame_height=height
+            camera_id=self.camera_id, raw_detections=raw_thermal,
+            frame_width=thermal_width, frame_height=thermal_height,
         )
         return merge_detections(rgb_detections, thermal_detections, self._derived_thermal_fusion)
 

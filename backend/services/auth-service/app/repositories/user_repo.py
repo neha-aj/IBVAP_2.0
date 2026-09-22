@@ -34,3 +34,24 @@ class UserRepository:
         await self._session.commit()
         await self._session.refresh(user)
         return user
+
+    async def set_mfa_secret(self, user: User, secret: str) -> User:
+        """Enrollment started, not yet confirmed -- `mfa_enabled` stays
+        untouched (see `User.mfa_secret`'s own docstring)."""
+        user.mfa_secret = secret
+        await self._session.commit()
+        await self._session.refresh(user)
+        return user
+
+    async def enable_mfa(self, user: User) -> User:
+        user.mfa_enabled = True
+        await self._session.commit()
+        await self._session.refresh(user)
+        return user
+
+    async def disable_mfa(self, user: User) -> User:
+        user.mfa_enabled = False
+        user.mfa_secret = None
+        await self._session.commit()
+        await self._session.refresh(user)
+        return user

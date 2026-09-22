@@ -15,7 +15,6 @@ COPY libs/ibvap_common /srv/libs/ibvap_common
 RUN pip install --no-cache-dir /srv/libs/ibvap_common
 
 COPY services/detection-service/pyproject.toml /srv/pyproject.toml
-COPY services/detection-service/app /srv/app
 
 # Default (non-GPU) image: CPU-only torch wheels first, so `ultralytics`
 # doesn't pull the much larger CUDA build (SAS §9 -- Dockerfile.gpu is the
@@ -32,6 +31,11 @@ RUN pip install --no-cache-dir --timeout 120 --retries 5 torch torchvision \
     fastapi>=0.111 "uvicorn[standard]>=0.30" redis>=5.0 httpx>=0.27 \
     numpy>=1.26 opencv-python-headless>=4.10 pydantic>=2.7 pydantic-settings>=2.3 \
     structlog>=24.1 ultralytics>=8.2 prometheus-client>=0.20
+
+# Copied after the (slow, large) dependency install above rather than before it:
+# the install doesn't use this code, and copying it first meant every code-only
+# change re-downloaded all of PyTorch. Same image contents, far faster rebuilds.
+COPY services/detection-service/app /srv/app
 
 RUN mkdir -p /srv/models && useradd --create-home --uid 1000 appuser && chown -R appuser /srv/models
 USER appuser

@@ -5,7 +5,12 @@ import pytest
 
 from ibvap_common.errors import UnauthorizedError
 from ibvap_common.settings import CommonSettings
-from ibvap_common.stream_auth import build_resource_url, create_resource_token, verify_resource_token
+from ibvap_common.stream_auth import (
+    build_resource_url,
+    create_resource_token,
+    resource_token_subject,
+    verify_resource_token,
+)
 
 
 def _settings() -> CommonSettings:
@@ -86,3 +91,42 @@ def test_build_resource_url_token_is_scoped_to_its_own_resource_only() -> None:
 
     with pytest.raises(UnauthorizedError):
         verify_resource_token(token, resource="SNAP-2", settings=settings)
+
+
+# --- M25 chain-of-custody: optional `subject` -----------------------------------
+
+
+def test_a_token_minted_with_a_subject_still_verifies_normally() -> None:
+    """Adding `subject` must not change the existing pass/fail behavior --
+    only add an extra, optional piece of information to a valid token."""
+    settings = _settings()
+    token = create_resource_token(resource="CAM-01", ttl_seconds=60, settings=settings, subject="alice")
+    verify_resource_token(token, resource="CAM-01", settings=settings)  # must not raise
+
+
+def test_resource_token_subject_returns_what_it_was_minted_with() -> None:
+    settings = _settings()
+    token = create_resource_token(resource="CAM-01", ttl_seconds=60, settings=settings, subject="alice")
+
+    assert resource_token_subject(token, settings=settings) == "alice"
+
+
+def test_resource_token_subject_is_none_when_not_provided() -> None:
+    """Every token minted before this existed, and any issuer that still
+    doesn't pass `subject`, must not error -- just report unknown."""
+    settings = _settings()
+    token = create_resource_token(resource="CAM-01", ttl_seconds=60, settings=settings)
+
+    assert resource_token_subject(token, settings=settings) is None
+
+
+def test_resource_token_subject_is_none_for_an_invalid_token() -> None:
+    assert resource_token_subject("not-a-real-token", settings=_settings()) is None
+
+
+def test_build_resource_url_passes_subject_through() -> None:
+    settings = _settings()
+    url = build_resource_url(path="/media/snapshots/SNAP-1", resource="SNAP-1", settings=settings, subject="bob")
+    token = url.split("?token=", 1)[1]
+
+    assert resource_token_subject(token, settings=settings) == "bob"

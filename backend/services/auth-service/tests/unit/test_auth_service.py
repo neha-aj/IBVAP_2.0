@@ -20,6 +20,8 @@ class FakeUser:
         self.password_hash = password_hash
         self.role = role
         self.is_active = True
+        self.mfa_secret: str | None = None
+        self.mfa_enabled = False
 
 
 class FakeUserRepo:
@@ -38,6 +40,19 @@ class FakeUserRepo:
     async def create(self, data: UserCreate, password_hash: str) -> FakeUser:
         user = FakeUser(data.username, password_hash, data.role)
         self.users[data.username] = user
+        return user
+
+    async def set_mfa_secret(self, user: FakeUser, secret: str) -> FakeUser:
+        user.mfa_secret = secret
+        return user
+
+    async def enable_mfa(self, user: FakeUser) -> FakeUser:
+        user.mfa_enabled = True
+        return user
+
+    async def disable_mfa(self, user: FakeUser) -> FakeUser:
+        user.mfa_enabled = False
+        user.mfa_secret = None
         return user
 
 
@@ -145,3 +160,145 @@ async def test_ensure_bootstrap_admin_creates_admin_when_empty() -> None:
     # Calling again must not create a second admin / duplicate error.
     await service.ensure_bootstrap_admin("admin", "adminpass123")
     assert await user_repo.count() == 1
+
+
+# --- M25 MFA -----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_login_for_an_account_without_mfa_ignores_a_stray_totp_code() -> None:
+    """Passing a totp_code for an account that never enabled MFA must not
+    change anything -- the field is opt-in, not "present means required"."""
+    user_repo = FakeUserRepo()
+    user_repo.users["alice"] = FakeUser("alice", hash_password("hunter2"))
+    service = AuthService(user_repo, FakeTokenRepo(), _settings())
+
+    result = await service.login(UserLogin(username="alice", password="hunter2", totp_code="000000"))
+
+    assert result.access_token
+
+
+@pytest.mark.asyncio
+async def test_login_for_an_mfa_enabled_account_without_a_code_requires_mfa() -> None:
+    from app.services.auth_service import MfaRequiredError
+    from app.services.totp import generate_secret
+
+    user_repo = FakeUserRepo()
+    user = FakeUser("alice", hash_password("hunter2"))
+    user.mfa_secret = generate_secret()
+    user.mfa_enabled = True
+    user_repo.users["alice"] = user
+    service = AuthService(user_repo, FakeTokenRepo(), _settings())
+
+    with pytest.raises(MfaRequiredError):
+        await service.login(UserLogin(username="alice", password="hunter2"))
+
+
+@pytest.mark.asyncio
+async def test_login_for_an_mfa_enabled_account_with_a_valid_code_succeeds() -> None:
+    from app.services.totp import generate_secret, provisioning_uri  # noqa: F401  (import parity check)
+    from pyotp import TOTP
+
+    user_repo = FakeUserRepo()
+    secret = "JBSWY3DPEHPK3PXP"
+    user = FakeUser("alice", hash_password("hunter2"))
+    user.mfa_secret = secret
+    user.mfa_enabled = True
+    user_repo.users["alice"] = user
+    service = AuthService(user_repo, FakeTokenRepo(), _settings())
+
+    valid_code = TOTP(secret).now()
+    result = await service.login(UserLogin(username="alice", password="hunter2", totp_code=valid_code))
+
+    assert result.access_token
+
+
+@pytest.mark.asyncio
+async def test_login_for_an_mfa_enabled_account_with_a_wrong_code_is_rejected() -> None:
+    from ibvap_common.errors import UnauthorizedError
+
+    user_repo = FakeUserRepo()
+    user = FakeUser("alice", hash_password("hunter2"))
+    user.mfa_secret = "JBSWY3DPEHPK3PXP"
+    user.mfa_enabled = True
+    user_repo.users["alice"] = user
+    service = AuthService(user_repo, FakeTokenRepo(), _settings())
+
+    with pytest.raises(UnauthorizedError, match="Invalid authenticator code"):
+        await service.login(UserLogin(username="alice", password="hunter2", totp_code="000000"))
+
+
+@pytest.mark.asyncio
+async def test_enroll_mfa_stores_a_secret_but_does_not_enable_it() -> None:
+    user_repo = FakeUserRepo()
+    user_repo.users["alice"] = FakeUser("alice", hash_password("hunter2"))
+    service = AuthService(user_repo, FakeTokenRepo(), _settings())
+
+    secret, uri = await service.enroll_mfa(user_repo.users["alice"].id)
+
+    assert secret
+    assert "alice" in uri
+    assert user_repo.users["alice"].mfa_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_verify_mfa_with_the_right_code_enables_it() -> None:
+    from pyotp import TOTP
+
+    user_repo = FakeUserRepo()
+    user_repo.users["alice"] = FakeUser("alice", hash_password("hunter2"))
+    service = AuthService(user_repo, FakeTokenRepo(), _settings())
+    secret, _uri = await service.enroll_mfa(user_repo.users["alice"].id)
+
+    await service.verify_mfa(user_repo.users["alice"].id, TOTP(secret).now())
+
+    assert user_repo.users["alice"].mfa_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_verify_mfa_with_the_wrong_code_does_not_enable_it() -> None:
+    from ibvap_common.errors import UnauthorizedError
+
+    user_repo = FakeUserRepo()
+    user_repo.users["alice"] = FakeUser("alice", hash_password("hunter2"))
+    service = AuthService(user_repo, FakeTokenRepo(), _settings())
+    await service.enroll_mfa(user_repo.users["alice"].id)
+
+    with pytest.raises(UnauthorizedError):
+        await service.verify_mfa(user_repo.users["alice"].id, "000000")
+    assert user_repo.users["alice"].mfa_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_disable_mfa_clears_the_secret_and_flag() -> None:
+    from pyotp import TOTP
+
+    user_repo = FakeUserRepo()
+    user_repo.users["alice"] = FakeUser("alice", hash_password("hunter2"))
+    service = AuthService(user_repo, FakeTokenRepo(), _settings())
+    secret, _uri = await service.enroll_mfa(user_repo.users["alice"].id)
+    await service.verify_mfa(user_repo.users["alice"].id, TOTP(secret).now())
+
+    await service.disable_mfa(user_repo.users["alice"].id)
+
+    user = user_repo.users["alice"]
+    assert user.mfa_enabled is False
+    assert user.mfa_secret is None
+    # And login no longer requires a code.
+    result = await service.login(UserLogin(username="alice", password="hunter2"))
+    assert result.access_token
+
+
+@pytest.mark.asyncio
+async def test_re_enrolling_replaces_a_pending_secret_without_enabling_mfa() -> None:
+    """An abandoned enrollment attempt must not lock anyone out -- calling
+    enroll again just issues a fresh secret."""
+    user_repo = FakeUserRepo()
+    user_repo.users["alice"] = FakeUser("alice", hash_password("hunter2"))
+    service = AuthService(user_repo, FakeTokenRepo(), _settings())
+
+    first_secret, _uri = await service.enroll_mfa(user_repo.users["alice"].id)
+    second_secret, _uri = await service.enroll_mfa(user_repo.users["alice"].id)
+
+    assert first_secret != second_secret
+    assert user_repo.users["alice"].mfa_enabled is False

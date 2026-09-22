@@ -6,6 +6,7 @@ from ibvap_common.errors import install_error_handlers
 from ibvap_common.logging import configure_logging, get_logger, install_correlation_id_middleware
 from ibvap_common.metrics import install_metrics
 
+from app.api import audit_log as audit_log_routes
 from app.api import health as health_routes
 from app.api import maintenance as maintenance_routes
 from app.api import recordings as recording_routes
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
     app.include_router(recording_routes.router)
     app.include_router(source_routes.router)
     app.include_router(maintenance_routes.router)
+    app.include_router(audit_log_routes.router)
     app.include_router(health_routes.router)
     return app
 

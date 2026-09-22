@@ -10,13 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ibvap_common.auth import TokenPayload, require_role
 from ibvap_common.errors import ApiError, NotFoundError
 from ibvap_common.internal_auth import verify_internal_token
-from ibvap_common.stream_auth import build_resource_url, verify_resource_token
+from ibvap_common.stream_auth import build_resource_url, resource_token_subject, verify_resource_token
 
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models.recording import Recording
 from app.repositories.media_repo import MediaRepository
 from app.schemas.recording import RecordingCreated, RecordingRead
+from app.schemas.verification import EvidenceVerification
+from app.security import integrity
+from app.services import anomaly_service, audit_log_service, ledger_service
+from app.services.verification_service import verify_evidence
 from app.storage.local_backend import LocalStorageBackend
 
 router = APIRouter(prefix="/media/recordings", tags=["recordings"])
@@ -54,11 +58,23 @@ async def create_recording(
     extension = Path(file.filename).suffix if file.filename else ".webm"
     url = await backend.save(subdir=f"recordings/{camera_id}/{today}", filename=f"clip{extension}", data=data)
 
+    # M25 tamper-evidence -- same approach as create_snapshot above.
+    recording_id = uuid.uuid4()
+    content_hash = integrity.compute_hash(data)
+    signature = integrity.sign_evidence(
+        media_root=settings.media_root, record_id=str(recording_id), camera_id=camera_id, content_hash=content_hash
+    )
+    key_id = integrity.current_key_id(settings.media_root)
+
     recording = await MediaRepository(session).create_recording(
         Recording(
-            camera_id=camera_id, event_id=event_id, file_path=url,
+            id=recording_id, camera_id=camera_id, event_id=event_id, file_path=url,
             start_time=start_time, end_time=end_time, duration_seconds=duration_seconds,
+            content_hash=content_hash, signature=signature, key_id=key_id,
         )
+    )
+    await ledger_service.anchor(
+        record_type="recording", record_id=str(recording.id), content_hash=content_hash, settings=settings
     )
     return RecordingCreated(id=str(recording.id), url=recording.file_path)
 
@@ -127,6 +143,15 @@ async def get_recording_file(
     recording = await MediaRepository(session).get_recording(parsed_id)
     if recording is None:
         raise NotFoundError(f"No recording with id {recording_id}")
+
+    actor = resource_token_subject(token, settings=settings)
+    await audit_log_service.append_audit_entry(
+        session, record_type="recording", record_id=recording.id, action="download" if download else "view",
+        actor=actor, result=None,
+    )
+    if download:
+        await anomaly_service.check_and_report(session, actor=actor, camera_id=recording.camera_id, settings=settings)
+
     content_type = mimetypes.guess_type(recording.file_path)[0] or "video/webm"
     headers = {"X-Accel-Redirect": recording.file_path}
     if download:
@@ -140,3 +165,46 @@ async def get_recording_file(
             f'attachment; filename="{recording.camera_id}_{stamp}.{extension}"'
         )
     return Response(status_code=200, media_type=content_type, headers=headers)
+
+
+@router.get("/{recording_id}/verify", response_model=EvidenceVerification)
+async def verify_recording(
+    recording_id: str,
+    token: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> EvidenceVerification:
+    """M25 tamper-evidence: recomputes the SHA-256 hash of the clip
+    currently on disk and checks it, plus its signature, against what was
+    captured at upload time (see app/services/verification_service.py).
+    Token-gated the same way as `GET /media/recordings/{id}/file` -- fired
+    from a JS `fetch` against a URL event-alert-service already mints
+    alongside `recordingUrl`, not a raw `<video>`/`<a>` tag, so it doesn't
+    need `require_role` on top."""
+    try:
+        parsed_id = uuid.UUID(recording_id)
+    except ValueError:
+        raise NotFoundError(f"No recording with id {recording_id}") from None
+
+    verify_resource_token(token, resource=recording_id, settings=settings)
+
+    recording = await MediaRepository(session).get_recording(parsed_id)
+    if recording is None:
+        raise NotFoundError(f"No recording with id {recording_id}")
+
+    result = await verify_evidence(
+        record_type="recording",
+        record_id=str(recording.id),
+        camera_id=recording.camera_id,
+        file_path=recording.file_path,
+        content_hash=recording.content_hash,
+        signature=recording.signature,
+        settings=settings,
+    )
+
+    actor = resource_token_subject(token, settings=settings)
+    await audit_log_service.append_audit_entry(
+        session, record_type="recording", record_id=recording.id, action="verify", actor=actor, result=result.status,
+    )
+    await anomaly_service.check_and_report(session, actor=actor, camera_id=recording.camera_id, settings=settings)
+    return result

@@ -71,6 +71,25 @@ def test_event_detail_urls_are_none_without_stored_ids() -> None:
     assert detail.recording_url is None
 
 
+def test_event_detail_includes_a_signed_recording_verify_url() -> None:
+    """M25 tamper-evidence: the Evidence page needs a way to call
+    media-service's `/verify` route for a recording -- minted the same way
+    as `recording_url` itself, from the stored id."""
+    settings = _settings()
+    recording_id = uuid.uuid4()
+    detail = to_event_detail(_event(recording_id=recording_id), settings)
+
+    assert detail.recording_verify_url.startswith(f"/media/recordings/{recording_id}/verify?token=")
+    verify_resource_token(
+        detail.recording_verify_url.split("?token=", 1)[1], resource=str(recording_id), settings=settings
+    )
+
+
+def test_event_detail_recording_verify_url_is_none_without_a_recording() -> None:
+    detail = to_event_detail(_event(), _settings())
+    assert detail.recording_verify_url is None
+
+
 def test_alert_read_rebuilds_recording_url_from_stored_id() -> None:
     settings = _settings()
     recording_id = uuid.uuid4()

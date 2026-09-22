@@ -25,7 +25,9 @@ from ibvap_common.settings import CommonSettings
 _TOKEN_TYPE = "resource"
 
 
-def create_resource_token(*, resource: str, ttl_seconds: int, settings: CommonSettings) -> str:
+def create_resource_token(
+    *, resource: str, ttl_seconds: int, settings: CommonSettings, subject: str | None = None
+) -> str:
     now = dt.datetime.now(dt.UTC)
     payload = {
         "res": resource,
@@ -33,6 +35,13 @@ def create_resource_token(*, resource: str, ttl_seconds: int, settings: CommonSe
         "iat": int(now.timestamp()),
         "exp": int((now + dt.timedelta(seconds=ttl_seconds)).timestamp()),
     }
+    if subject is not None:
+        # M25 chain-of-custody: who this URL was minted for, so a service
+        # that later serves the resource can attribute the access without
+        # needing its own user-auth check. Optional and additive -- every
+        # existing caller that doesn't pass `subject` gets the exact same
+        # token shape as before.
+        payload["sub"] = subject
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
@@ -51,7 +60,22 @@ def verify_resource_token(token: str | None, *, resource: str, settings: CommonS
         raise UnauthorizedError("Invalid stream token")
 
 
-def build_resource_url(*, path: str, resource: str, settings: CommonSettings) -> str:
+def resource_token_subject(token: str, *, settings: CommonSettings) -> str | None:
+    """The `subject` a resource token was minted for, if any (M25 chain-of-
+    custody logging) -- call only after `verify_resource_token` already
+    passed. Returns `None` for a token minted without one (every token
+    issued before this existed, and any issuer that still doesn't pass
+    `subject`), never raises, since attribution is a nice-to-have for the
+    audit log, not a security check."""
+    try:
+        raw = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except jwt.InvalidTokenError:
+        return None
+    subject = raw.get("sub")
+    return subject if isinstance(subject, str) else None
+
+
+def build_resource_url(*, path: str, resource: str, settings: CommonSettings, subject: str | None = None) -> str:
     """Mints a fresh resource token scoped to `resource` and appends it to
     `path` as `?token=...` -- the shape every issuing endpoint (anpr-service's
     `GET /reads`, reid-service's search/matches endpoints, event-alert-
@@ -64,5 +88,7 @@ def build_resource_url(*, path: str, resource: str, settings: CommonSettings) ->
     (browsing an old event/alert), so a token baked in once at write time
     would already be expired by then -- `Settings.stream_token_ttl_seconds`
     only needs to outlive one page view, not the resource's lifetime."""
-    token = create_resource_token(resource=resource, ttl_seconds=settings.stream_token_ttl_seconds, settings=settings)
+    token = create_resource_token(
+        resource=resource, ttl_seconds=settings.stream_token_ttl_seconds, settings=settings, subject=subject
+    )
     return f"{path}?token={token}"

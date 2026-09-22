@@ -22,6 +22,7 @@ volumes:
   postgres-data:
   redis-data:
   media-data:
+  ledger-data:
   detection-models:
   prometheus-data:
   grafana-data:
@@ -396,8 +397,33 @@ services:
       SERVICE_NAME: media-service
       DB_SCHEMA: media
       MEDIA_ROOT: /data/media
+      # M25: best-effort independent anchoring -- media-service works fine
+      # if ledger-service is unreachable (see app/services/ledger_service.py's
+      # own docstring), so this is only a URL, not a hard `depends_on` below.
+      LEDGER_SERVICE_URL: http://ledger-service:8000
     volumes:
       - media-data:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [ibvap-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ledger-service:
+    build:
+      context: .
+      dockerfile: services/ledger-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SERVICE_NAME: ledger-service
+      DB_SCHEMA: ledger
+    volumes:
+      - ledger-data:/data/ledger
     depends_on:
       postgres:
         condition: service_healthy

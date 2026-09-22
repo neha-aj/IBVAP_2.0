@@ -31,6 +31,8 @@ jobs:
             path: services/event-alert-service
           - package: media-service
             path: services/media-service
+          - package: ledger-service
+            path: services/ledger-service
           - package: realtime-gateway
             path: services/realtime-gateway
           - package: analytics-service
@@ -66,3 +68,33 @@ jobs:
       - name: Run tests
         working-directory: ${{ matrix.path }}
         run: python -m pytest -q
+
+  # M25: dependency + base-image vulnerability scanning. Separate job from
+  # `test` above (not a step inside it) so a scan finding never blocks a
+  # merge on its own -- it surfaces in the PR's Security tab as an advisory,
+  # the same "additive, doesn't change existing behavior" principle as
+  # every other M25 change. No secrets needed: Trivy's public vulnerability
+  # DB and GitHub-hosted runners are enough.
+  scan:
+    name: dependency vulnerability scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy (filesystem scan of every service's dependencies)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: 0
+
+      - name: Upload results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif

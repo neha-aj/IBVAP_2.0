@@ -7,8 +7,6 @@ import cv2
 import numpy as np
 import pytest
 
-from ibvap_common.thermal_sim import simulate_thermal
-
 from app.core.config import Settings
 from app.inference.base import RawDetection
 from app.inference.fusion_merger import FusionSettings, merge_detections
@@ -80,32 +78,36 @@ def test_default_settings_still_pass_every_thermal_only_object_through() -> None
     assert [d.id for d in merge_detections([], thermal, FusionSettings())] == ["weak"]
 
 
-# --- simulated thermal rendering -----------------------------------------
+def test_a_larger_thermal_box_around_the_rgb_person_is_the_same_person() -> None:
+    """A thermal blob often includes a floor reflection or warm trail, so its box is
+    much bigger than the RGB one: low IoU, but it plainly contains the person."""
+    rgb = [_det(id="rgb", x=40, y=30, w=10, h=30)]
+    thermal = [_det(id="blob", confidence=0.8, x=38, y=28, w=16, h=52)]  # taller and wider: reflection included
 
-def test_simulate_thermal_returns_a_same_size_bgr_image() -> None:
-    frame = np.random.default_rng(0).integers(0, 255, (120, 160, 3), dtype=np.uint8)
+    merged = merge_detections(rgb, thermal, FusionSettings())
 
-    out = simulate_thermal(frame)
-
-    assert out.shape == frame.shape and out.dtype == np.uint8
-
-
-def test_simulate_thermal_is_deterministic() -> None:
-    """Ingestion (preview) and detection (analysis) each render the frame
-    independently -- they must produce the identical image."""
-    frame = np.random.default_rng(1).integers(0, 255, (90, 120, 3), dtype=np.uint8)
-
-    assert np.array_equal(simulate_thermal(frame), simulate_thermal(frame.copy()))
+    assert [d.id for d in merged] == ["rgb"]
 
 
-def test_warm_red_regions_render_hotter_than_cool_blue_ones() -> None:
-    warm = np.full((60, 60, 3), (40, 60, 200), dtype=np.uint8)  # BGR: red-dominant
-    cool = np.full((60, 60, 3), (200, 60, 40), dtype=np.uint8)  # BGR: blue-dominant, same-ish brightness
-    frame = np.hstack([warm, cool])
+def test_a_smaller_thermal_box_inside_the_rgb_box_is_the_same_person() -> None:
+    rgb = [_det(id="rgb", x=30, y=20, w=20, h=50)]
+    thermal = [_det(id="head", confidence=0.8, x=34, y=22, w=8, h=14)]
 
-    heat = cv2.cvtColor(simulate_thermal(frame), cv2.COLOR_BGR2GRAY)
+    assert [d.id for d in merge_detections(rgb, thermal, FusionSettings())] == ["rgb"]
 
-    assert heat[:, :60].mean() > heat[:, 60:].mean()
+
+def test_two_people_standing_side_by_side_are_still_two_people() -> None:
+    rgb = [_det(id="left", x=20, y=20, w=12, h=40)]
+    thermal = [_det(id="right", confidence=0.8, x=31, y=20, w=12, h=40)]  # only their edges touch
+
+    assert {d.id for d in merge_detections(rgb, thermal, FusionSettings())} == {"left", "right"}
+
+
+def test_containment_only_merges_boxes_of_the_same_type() -> None:
+    rgb = [_det(id="car", type="vehicle", confidence=0.9, x=10, y=20, w=40, h=25)]
+    thermal = [_det(id="driver", type="person", confidence=0.8, x=20, y=25, w=8, h=15)]  # inside the car's box
+
+    assert {d.id for d in merge_detections(rgb, thermal, FusionSettings())} == {"car", "driver"}
 
 
 # --- FrameConsumer -------------------------------------------------------
@@ -268,3 +270,90 @@ async def test_real_dual_camera_still_gets_its_two_consumers() -> None:
     await manager._reconcile()
 
     assert sorted(started) == ["CAM-D:rgb", "CAM-D:thermal"]
+
+
+# --- the thermal image shipped by ingestion ------------------------------------
+
+class _ShapeAwareEngine:
+    """RGB frames (400x400) show nothing; the thermal image (100x200) shows one
+    person on its right -- so a result only appears if the thermal image itself
+    was analysed, and its x position reveals which image size it was scaled by."""
+
+    def __init__(self) -> None:
+        self.seen_shapes: list[tuple[int, int]] = []
+
+    def infer(self, frame: np.ndarray) -> list[RawDetection]:
+        self.seen_shapes.append(frame.shape[:2])
+        if frame.shape[:2] == (100, 200):
+            return [RawDetection(class_id=0, confidence=0.9, x1=140, y1=10, x2=190, y2=90)]
+        return []
+
+
+def _thermal_jpeg(height: int = 100, width: int = 200) -> bytes:
+    ok, encoded = cv2.imencode(".jpg", np.full((height, width, 3), 60, dtype=np.uint8))
+    assert ok
+    return encoded.tobytes()
+
+
+@pytest.mark.asyncio
+async def test_the_thermal_image_from_ingestion_is_what_gets_analysed_at_its_own_size() -> None:
+    redis, engine, publisher = _FakeRedis(), _ShapeAwareEngine(), _RecordingPublisher()
+    consumer = _consumer(redis, engine, publisher, fusion=FusionSettings(thermal_only_min_confidence=0.5))
+    fields = _message(derived=True)
+    fields[b"thermalJpeg"] = _thermal_jpeg()
+
+    await consumer._process_message(b"1-0", fields)
+
+    assert (100, 200) in engine.seen_shapes  # the shipped thermal image itself, not a re-render of the RGB frame
+    assert len(publisher.calls[0]) == 1
+    # 140/200 of the way across the *thermal* image; scaled by the RGB frame's width it'd be 35%.
+    assert publisher.calls[0][0].bbox.x == pytest.approx(70.0)
+
+
+@pytest.mark.asyncio
+async def test_an_undecodable_thermal_image_falls_back_to_rendering_from_the_frame() -> None:
+    redis, engine, publisher = _FakeRedis(), _ShapeAwareEngine(), _RecordingPublisher()
+    consumer = _consumer(redis, engine, publisher, fusion=FusionSettings())
+    fields = _message(derived=True)
+    fields[b"thermalJpeg"] = b"this is not a jpeg"
+
+    await consumer._process_message(b"1-0", fields)
+
+    assert engine.seen_shapes == [(400, 400), (400, 400)]  # RGB, then the fallback rendering of it (same size)
+    assert redis.acked == [b"1-0"]  # the frame was still processed, not dropped
+
+
+@pytest.mark.asyncio
+async def test_a_derived_frame_without_a_shipped_thermal_image_still_works() -> None:
+    """Frames queued by an older ingestion (no `thermalJpeg`) must keep being analysed."""
+    redis, engine, publisher = _FakeRedis(), _TwoViewEngine(), _RecordingPublisher()
+    consumer = _consumer(redis, engine, publisher, fusion=FusionSettings())
+
+    await consumer._process_message(b"1-0", _message(derived=True))
+
+    assert engine.infer_calls == 2
+    assert len(publisher.calls) == 1
+
+
+class _RecordingEngine:
+    def __init__(self) -> None:
+        self.frames: list[np.ndarray] = []
+
+    def infer(self, frame: np.ndarray) -> list[RawDetection]:
+        self.frames.append(frame)
+        return []
+
+
+@pytest.mark.asyncio
+async def test_the_thermal_view_is_analysed_as_white_hot_greyscale() -> None:
+    redis, engine, publisher = _FakeRedis(), _RecordingEngine(), _RecordingPublisher()
+    consumer = _consumer(redis, engine, publisher, fusion=FusionSettings())
+    fields = _message(derived=True)
+    fields[b"thermalJpeg"] = _thermal_jpeg()
+
+    await consumer._process_message(b"1-0", fields)
+
+    rgb_frame, thermal_view = engine.frames
+    assert rgb_frame.shape[:2] == (400, 400)  # the RGB frame goes to the model untouched
+    assert thermal_view.shape[:2] == (100, 200)
+    assert (thermal_view[..., 0] == thermal_view[..., 1]).all()  # greyscale: what the model reads well

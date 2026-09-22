@@ -51,8 +51,8 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener("ibvap:auth-expired", handleAuthExpired);
   }, []);
 
-  const login = useCallback(async (username, password) => {
-    const loggedInUser = await authService.login(username, password);
+  const login = useCallback(async (username, password, totpCode) => {
+    const loggedInUser = await authService.login(username, password, totpCode);
     setUser(loggedInUser);
     setStatus("authenticated");
     return loggedInUser;

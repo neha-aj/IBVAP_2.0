@@ -48,6 +48,12 @@ class EventRead(_CamelModel):
     # for the evidence/recordings page -- a list view needs to know which
     # rows even have a clip without a per-row detail round trip.
     recording_url: str | None = None
+    # M25 tamper-evidence: a signed URL to media-service's `/verify` route
+    # for this recording, same minting pattern as `recording_url` itself.
+    # Optional/None under the exact same conditions (no recording, or no
+    # `settings`) -- additive, existing consumers that ignore unknown
+    # fields see no change.
+    recording_verify_url: str | None = None
 
 
 class EventDetail(EventRead):
@@ -89,7 +95,7 @@ class EventListResponse(_CamelModel):
     page_size: int
 
 
-def to_event_read(event: Event, settings: Settings | None = None) -> EventRead:
+def to_event_read(event: Event, settings: Settings | None = None, *, subject: str | None = None) -> EventRead:
     """Explicit field-by-field mapping rather than `model_validate(...,
     from_attributes=True)` -- the ORM column is `event_type`, the API field
     is `event` (API Spec §5), so generic attribute-mode validation can't
@@ -99,7 +105,13 @@ def to_event_read(event: Event, settings: Settings | None = None) -> EventRead:
     `event.recording_url` is a denormalized raw file path (M24 security
     review follow-up, same issue `to_event_detail` already documents below);
     only rebuilt as a short-lived signed URL when `settings` is actually
-    given, same pattern as `to_alert_read`."""
+    given, same pattern as `to_alert_read`.
+
+    `subject` optional (M25 chain-of-custody): the requesting user's
+    identity, baked into the minted token so media-service can attribute
+    the eventual view/export/verify to someone instead of logging
+    "unknown". Every existing caller that omits it gets the exact same URL
+    shape as before."""
     return EventRead(
         id=str(event.id),
         time=event.created_at,
@@ -112,14 +124,21 @@ def to_event_read(event: Event, settings: Settings | None = None) -> EventRead:
         status=event.status,  # type: ignore[arg-type]
         description=event.description,
         recording_url=build_resource_url(
-            path=f"/media/recordings/{event.recording_id}/file", resource=str(event.recording_id), settings=settings
+            path=f"/media/recordings/{event.recording_id}/file", resource=str(event.recording_id),
+            settings=settings, subject=subject,
+        )
+        if event.recording_id and settings
+        else None,
+        recording_verify_url=build_resource_url(
+            path=f"/media/recordings/{event.recording_id}/verify", resource=str(event.recording_id),
+            settings=settings, subject=subject,
         )
         if event.recording_id and settings
         else None,
     )
 
 
-def to_event_detail(event: Event, settings: Settings) -> EventDetail:
+def to_event_detail(event: Event, settings: Settings, *, subject: str | None = None) -> EventDetail:
     """`event.snapshot_url`/`event.recording_url` are denormalized raw file
     paths captured at event-creation time -- convenient for the DB, but
     (M24 security review follow-up) fetchable with zero auth if handed to
@@ -129,7 +148,7 @@ def to_event_detail(event: Event, settings: Settings) -> EventDetail:
     each time this event is actually read (a token baked in once at
     capture time could easily have expired by the time anyone views an
     old event)."""
-    base = to_event_read(event, settings)
+    base = to_event_read(event, settings, subject=subject)
     return EventDetail(
         # recording_url excluded from the spread -- EventRead already
         # carries it (built above via `base`'s own `settings`), so keeping
@@ -139,7 +158,8 @@ def to_event_detail(event: Event, settings: Settings) -> EventDetail:
         **base.model_dump(exclude={"recording_url", "camera_id"}),
         camera_id=event.camera_id,
         snapshot_url=build_resource_url(
-            path=f"/media/snapshots/{event.snapshot_id}", resource=str(event.snapshot_id), settings=settings
+            path=f"/media/snapshots/{event.snapshot_id}", resource=str(event.snapshot_id),
+            settings=settings, subject=subject,
         )
         if event.snapshot_id
         else None,

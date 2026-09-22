@@ -1,12 +1,59 @@
-import { Download, MapPin } from "lucide-react";
+import { useState } from "react";
+import { Download, MapPin, ShieldCheck } from "lucide-react";
 
 import Badge from "../common/Badge";
 import { GATEWAY_ORIGIN } from "../../services/api";
 
+// M25 tamper-evidence: maps a verify response's `status` to the closest
+// existing Badge tone (see Badge.jsx) rather than adding new ones.
+const VERIFY_STATUS_TONE = {
+  verified: "online",
+  tampered: "offline",
+  signature_invalid: "offline",
+  file_missing: "offline",
+  not_signed: "neutral",
+};
+
+const VERIFY_STATUS_LABEL = {
+  verified: "Verified",
+  tampered: "Tampered",
+  signature_invalid: "Signature Invalid",
+  file_missing: "File Missing",
+  not_signed: "Not Signed",
+};
+
 export default function EvidenceDetail({ evidence }) {
+  const [verification, setVerification] = useState(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState(null);
+
   const exportUrl = evidence?.recordingUrl
     ? `${GATEWAY_ORIGIN}${evidence.recordingUrl}&download=true`
     : undefined;
+
+  // Reset any previous check when the selected evidence item changes, so a
+  // stale "Verified" badge never appears to describe a different clip.
+  const evidenceId = evidence?.id;
+  if (verification && verification.evidenceId !== evidenceId) {
+    setVerification(null);
+    setVerifyError(null);
+  }
+
+  async function handleVerify() {
+    if (!evidence?.recordingVerifyUrl) return;
+    setIsVerifying(true);
+    setVerifyError(null);
+    try {
+      const response = await fetch(`${GATEWAY_ORIGIN}${evidence.recordingVerifyUrl}`);
+      if (!response.ok) throw new Error(`Verify request failed (${response.status})`);
+      const result = await response.json();
+      setVerification({ ...result, evidenceId });
+    } catch (err) {
+      setVerifyError(err);
+    } finally {
+      setIsVerifying(false);
+    }
+  }
 
   return (
     <section className="panel mt-2 overflow-hidden border-info">
@@ -15,6 +62,11 @@ export default function EvidenceDetail({ evidence }) {
 
         <div className="mt-3 flex flex-wrap gap-2">
           <Badge tone={evidence.severity}>{evidence.severity}</Badge>
+          {verification && (
+            <Badge tone={VERIFY_STATUS_TONE[verification.status] || "neutral"}>
+              {VERIFY_STATUS_LABEL[verification.status] || verification.status}
+            </Badge>
+          )}
         </div>
 
         <h2 className="mt-3 text-sm font-semibold text-primary">
@@ -69,7 +121,7 @@ export default function EvidenceDetail({ evidence }) {
         </div>
       </div>
 
-      <div className="border-t border-line p-4">
+      <div className="space-y-2 border-t border-line p-4">
         <a
           href={exportUrl}
           aria-disabled={!evidence.recordingUrl}
@@ -82,6 +134,24 @@ export default function EvidenceDetail({ evidence }) {
           <Download size={13} />
           Export for Investigation
         </a>
+
+        <button
+          type="button"
+          onClick={handleVerify}
+          disabled={!evidence.recordingVerifyUrl || isVerifying}
+          className={`flex w-full items-center justify-center gap-2 border px-3 py-2 text-xs font-semibold ${
+            evidence.recordingVerifyUrl
+              ? "border-line bg-panelSecondary text-secondary hover:bg-slate-800/40"
+              : "cursor-not-allowed border-line bg-panelSecondary text-muted"
+          }`}
+        >
+          <ShieldCheck size={13} />
+          {isVerifying ? "Verifying..." : "Verify Integrity"}
+        </button>
+
+        {verifyError && (
+          <p className="text-center text-[10px] text-danger">Verification check failed. Try again.</p>
+        )}
       </div>
     </section>
   );

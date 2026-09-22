@@ -22,6 +22,14 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
     role: Mapped[str] = mapped_column(String, nullable=False, default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # M25 MFA: `mfa_secret` is set as soon as enrollment starts (POST
+    # .../mfa/enroll) but `mfa_enabled` only flips True once the user
+    # proves they can generate a matching code (POST .../mfa/verify) --
+    # otherwise a typo'd/never-finished enrollment could lock someone out
+    # of their own account. Nullable/False by default: every existing user
+    # keeps logging in exactly as before until they opt in.
+    mfa_secret: Mapped[str | None] = mapped_column(String, nullable=True)
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

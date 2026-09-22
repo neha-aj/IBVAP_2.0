@@ -16,7 +16,7 @@ COPY services/media-service/alembic.ini /srv/alembic.ini
 RUN pip install --no-cache-dir \
     fastapi>=0.111 "uvicorn[standard]>=0.30" "sqlalchemy[asyncio]>=2.0" \
     asyncpg>=0.29 alembic>=1.13 "python-multipart>=0.0.9" pydantic>=2.7 \
-    pydantic-settings>=2.3 structlog>=24.1
+    pydantic-settings>=2.3 structlog>=24.1 cryptography>=42 httpx>=0.27
 
 RUN mkdir -p /data/media && useradd --create-home --uid 1000 appuser && chown -R appuser /data/media
 USER appuser

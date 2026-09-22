@@ -40,6 +40,7 @@ class FramePublisher:
     async def publish(
         self, camera_id: str, frame: np.ndarray, *, loop_generation: int = 0, modality: str | None = None,
         derived_thermal: bool = False,
+        thermal_jpeg: bytes | None = None,
     ) -> None:
         ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality])
         if not ok:
@@ -55,7 +56,11 @@ class FramePublisher:
         # Set only for a camera whose thermal view is rendered from this same
         # frame; tells detection to also analyse that rendering. Absent (the
         # field isn't even written) for every other camera.
-        derived_fields = {"derivedThermal": "1"} if derived_thermal else {}
+        derived_fields: dict[str, str | bytes] = {"derivedThermal": "1"} if derived_thermal else {}
+        if derived_thermal and thermal_jpeg:
+            # The simulated thermal image ingestion rendered for this frame: detection
+            # analyses exactly this, so what the operator sees is what was analysed.
+            derived_fields["thermalJpeg"] = thermal_jpeg
         await xadd_capped(
             self._redis,
             stream_key,

@@ -17,7 +17,7 @@ COPY services/auth-service/alembic.ini /srv/alembic.ini
 RUN pip install --no-cache-dir \
     fastapi>=0.111 "uvicorn[standard]>=0.30" "sqlalchemy[asyncio]>=2.0" \
     asyncpg>=0.29 alembic>=1.13 pydantic>=2.7 pydantic-settings>=2.3 \
-    "passlib[bcrypt]>=1.7" "bcrypt<4.1" pyjwt>=2.8 structlog>=24.1
+    "passlib[bcrypt]>=1.7" "bcrypt<4.1" pyjwt>=2.8 structlog>=24.1 pyotp>=2.9
 
 RUN useradd --create-home --uid 1000 appuser
 USER appuser

@@ -80,10 +80,11 @@ class _FakeRedis:
         return member in self.paused_ids
 
 
-def _worker_with(redis_client) -> CameraWorker:
+def _worker_with(redis_client, *, derive_thermal: bool = False) -> CameraWorker:
     return CameraWorker(
         camera_id="CAM-01", camera_type="file", source_url="/videos/a.mp4",
         settings=_settings(), redis_client=redis_client, http_client=httpx.AsyncClient(),
+        derive_thermal=derive_thermal,
     )
 
 
@@ -185,9 +186,11 @@ class _KwargsRecordingPublisher(_RecordingPublisher):
     def __init__(self) -> None:
         super().__init__()
         self.derived_flags: list[bool] = []
+        self.thermal_jpegs: list[bytes | None] = []
 
     async def publish(self, *args, **kwargs) -> None:
         self.derived_flags.append(kwargs.get("derived_thermal", False))
+        self.thermal_jpegs.append(kwargs.get("thermal_jpeg"))
         await super().publish(*args, **kwargs)
 
 
@@ -207,8 +210,7 @@ async def _run_worker_briefly(worker: CameraWorker, monkeypatch) -> _RecordingCa
 
 @pytest.mark.asyncio
 async def test_worker_renders_a_thermal_preview_and_flags_frames_when_deriving(monkeypatch) -> None:
-    worker = _worker_with(_FakeRedis())
-    worker.derive_thermal = True
+    worker = _worker_with(_FakeRedis(), derive_thermal=True)
     worker._publisher = _KwargsRecordingPublisher()
 
     cache = await _run_worker_briefly(worker, monkeypatch)
@@ -226,3 +228,31 @@ async def test_worker_writes_no_thermal_preview_by_default(monkeypatch) -> None:
 
     assert "CAM-01:thermal" not in cache.set_keys
     assert worker._publisher.derived_flags and not any(worker._publisher.derived_flags)
+
+
+@pytest.mark.asyncio
+async def test_worker_sends_the_rendered_thermal_image_to_analysis_with_each_frame(monkeypatch) -> None:
+    import cv2
+    import numpy as np
+
+    worker = _worker_with(_FakeRedis(), derive_thermal=True)
+    worker._publisher = _KwargsRecordingPublisher()
+
+    cache = await _run_worker_briefly(worker, monkeypatch)
+
+    sent = [j for j in worker._publisher.thermal_jpegs if j]
+    assert sent, "every published frame of a generated-thermal camera should carry its thermal image"
+    assert len(sent) == len(worker._publisher.thermal_jpegs)
+    decoded = cv2.imdecode(np.frombuffer(sent[0], np.uint8), cv2.IMREAD_COLOR)
+    assert decoded is not None and decoded.shape[2] == 3
+    assert "CAM-01:thermal" in cache.set_keys  # ...and it's the same image shown as the thermal tile
+
+
+@pytest.mark.asyncio
+async def test_worker_sends_no_thermal_image_when_not_deriving(monkeypatch) -> None:
+    worker = _worker_with(_FakeRedis())
+    worker._publisher = _KwargsRecordingPublisher()
+
+    await _run_worker_briefly(worker, monkeypatch)
+
+    assert worker._publisher.thermal_jpegs and not any(worker._publisher.thermal_jpegs)

@@ -2,14 +2,31 @@ import datetime as dt
 import uuid
 
 from ibvap_common.auth import create_token, decode_token
-from ibvap_common.errors import ConflictError, UnauthorizedError
+from ibvap_common.errors import ApiError, ConflictError, UnauthorizedError
 from ibvap_common.settings import CommonSettings
 
 from app.repositories.token_repo import TokenRepository
 from app.repositories.user_repo import UserRepository
 from app.schemas.token import TokenPair
 from app.schemas.user import UserCreate, UserLogin, UserRead
+from app.services import totp
 from app.services.security import DUMMY_PASSWORD_HASH, hash_password, verify_password
+
+
+class MfaRequiredError(ApiError):
+    """M25: distinct from a plain `UnauthorizedError` (different `type`, per
+    the RFC 7807 convention `ibvap_common.errors` already establishes) so
+    the frontend can tell "wrong password" apart from "password was right,
+    now enter your authenticator code" and prompt accordingly, instead of
+    both looking like a generic login failure."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=401,
+            title="MFA code required",
+            detail="Enter your authenticator app code to finish signing in.",
+            error_type="https://ibvap.dev/errors/mfa-required",
+        )
 
 
 class AuthService:
@@ -42,6 +59,12 @@ class AuthService:
         password_ok = verify_password(data.password, password_hash)
         if user is None or not user.is_active or not password_ok:
             raise UnauthorizedError("Invalid username or password")
+
+        if user.mfa_enabled:
+            if not data.totp_code:
+                raise MfaRequiredError()
+            if not totp.verify_code(secret=user.mfa_secret, code=data.totp_code):
+                raise UnauthorizedError("Invalid authenticator code")
 
         access_token = create_token(
             user_id=str(user.id),
@@ -110,6 +133,38 @@ class AuthService:
             refresh_token=refresh_token,
             user=UserRead.model_validate(user, from_attributes=True),
         )
+
+    async def enroll_mfa(self, user_id: uuid.UUID) -> tuple[str, str]:
+        """Starts (or restarts) enrollment: generates a fresh secret, stores
+        it, but does not enable MFA yet -- returns `(secret, provisioning_uri)`.
+        Calling this again before `verify_mfa` simply replaces the pending
+        secret, so an abandoned/failed enrollment never locks the account."""
+        user = await self._users.get_by_id(user_id)
+        if user is None:
+            raise UnauthorizedError("User no longer active")
+        secret = totp.generate_secret()
+        await self._users.set_mfa_secret(user, secret)
+        return secret, totp.provisioning_uri(secret=secret, username=user.username)
+
+    async def verify_mfa(self, user_id: uuid.UUID, code: str) -> None:
+        """Confirms enrollment: the user must produce one valid code from
+        the secret `enroll_mfa` just issued before MFA actually turns on."""
+        user = await self._users.get_by_id(user_id)
+        if user is None or not user.mfa_secret:
+            raise UnauthorizedError("No MFA enrollment in progress")
+        if not totp.verify_code(secret=user.mfa_secret, code=code):
+            raise UnauthorizedError("Invalid authenticator code")
+        await self._users.enable_mfa(user)
+
+    async def disable_mfa(self, user_id: uuid.UUID) -> None:
+        user = await self._users.get_by_id(user_id)
+        if user is None:
+            raise UnauthorizedError("User no longer active")
+        await self._users.disable_mfa(user)
+
+    async def mfa_status(self, user_id: uuid.UUID) -> bool:
+        user = await self._users.get_by_id(user_id)
+        return bool(user and user.mfa_enabled)
 
     async def ensure_bootstrap_admin(self, username: str, password: str) -> None:
         """Creates the first admin user if the users table is empty

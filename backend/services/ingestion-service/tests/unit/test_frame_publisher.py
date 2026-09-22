@@ -59,3 +59,20 @@ async def test_publish_flags_frames_of_a_generated_thermal_camera() -> None:
 
     assert redis_client.calls[0][1]["derivedThermal"] == "1"
     assert "derivedThermal" not in redis_client.calls[1][1]
+
+
+@pytest.mark.asyncio
+async def test_publish_ships_the_rendered_thermal_image_only_for_a_generated_thermal_camera() -> None:
+    redis_client = FakeRedis()
+    publisher = FramePublisher(redis_client, jpeg_quality=80, maxlen=100)
+
+    await publisher.publish("CAM-01", _frame(), derived_thermal=True, thermal_jpeg=b"THERMAL-BYTES")
+    await publisher.publish("CAM-01", _frame(), derived_thermal=True)  # nothing rendered yet
+    await publisher.publish("CAM-01", _frame(), thermal_jpeg=b"ignored")  # not a derived camera
+    await publisher.publish("CAM-01", _frame())
+
+    assert redis_client.calls[0][1]["thermalJpeg"] == b"THERMAL-BYTES"
+    assert "thermalJpeg" not in redis_client.calls[1][1]
+    assert redis_client.calls[1][1]["derivedThermal"] == "1"
+    assert "thermalJpeg" not in redis_client.calls[2][1] and "derivedThermal" not in redis_client.calls[2][1]
+    assert "thermalJpeg" not in redis_client.calls[3][1]

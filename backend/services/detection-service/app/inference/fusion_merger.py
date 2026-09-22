@@ -31,6 +31,11 @@ class FusionSettings:
     # ibvap_common.thermal_sim) sets this higher, since an unaccounted-for box
     # there is far more likely a rendering artefact than a real second object.
     thermal_only_min_confidence: float = 0.0
+    # A thermal box that covers at least this fraction of the *smaller* of the two boxes is the
+    # same object even if the IoU is low: a thermal blob is often bigger than the RGB box (a
+    # person's reflection on a glossy floor, a warm trail), so a small box inside a large one
+    # scores a poor IoU while plainly being the same person.
+    duplicate_containment: float = 0.6
 
 
 def _iou(a: BoundingBox, b: BoundingBox) -> float:
@@ -47,6 +52,13 @@ def _iou(a: BoundingBox, b: BoundingBox) -> float:
         return 0.0
     union_area = a.width * a.height + b.width * b.height - inter_area
     return inter_area / union_area if union_area > 0 else 0.0
+
+
+def _overlap_over_smaller(a: BoundingBox, b: BoundingBox) -> float:
+    inter_w = max(0.0, min(a.x + a.width, b.x + b.width) - max(a.x, b.x))
+    inter_h = max(0.0, min(a.y + a.height, b.y + b.height) - max(a.y, b.y))
+    smaller = min(a.width * a.height, b.width * b.height)
+    return (inter_w * inter_h) / smaller if smaller > 0 else 0.0
 
 
 def merge_detections(
@@ -122,7 +134,12 @@ def merge_detections(
         if i in matched_thermal_indices:
             continue
         if any(
-            kept.type == tdet.type and _iou(kept.bbox, tdet.bbox) > settings.min_iou for kept in rgb_kept
+            kept.type == tdet.type
+            and (
+                _iou(kept.bbox, tdet.bbox) > settings.min_iou
+                or _overlap_over_smaller(kept.bbox, tdet.bbox) >= settings.duplicate_containment
+            )
+            for kept in rgb_kept
         ):
             continue
         if tdet.confidence < settings.thermal_only_min_confidence:

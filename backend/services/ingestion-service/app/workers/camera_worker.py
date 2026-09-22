@@ -16,7 +16,7 @@ import redis.asyncio as redis
 
 from ibvap_common.camera_pause import PAUSED_CAMERAS_KEY
 from ibvap_common.logging import get_logger
-from ibvap_common.thermal_sim import simulate_thermal
+from ibvap_common.thermal_sim import ThermalSimulator
 
 from app.capture.base import FrameSource
 from app.capture.factory import build_frame_source
@@ -36,6 +36,10 @@ logger = get_logger(__name__)
 # How often a paused/unpaused worker re-checks that set -- a resume takes
 # effect within this long, without a Redis round-trip on every captured frame.
 _PAUSE_POLL_SECONDS = 0.5
+# A generated thermal view is re-rendered at most this often (plus once for every
+# frame sent to analysis) -- thermal footage is low frame-rate anyway, and it keeps
+# the extra CPU per derived camera small.
+_THERMAL_MIN_INTERVAL = 1.0 / 15
 
 
 class CameraWorker:
@@ -85,6 +89,12 @@ class CameraWorker:
         # of the same frame together. False for every other camera.
         self.derive_thermal = derive_thermal
         self._thermal_cache_key = f"{camera_id}:thermal"
+        # Stateful (it learns the scene's background to tell what's moving/"warm"), so one
+        # per worker; the latest rendered JPEG is what's shown and what's sent to detection.
+        self._thermal_sim = ThermalSimulator() if derive_thermal else None
+        self._thermal_jpeg: bytes | None = None
+        self._thermal_rendered_at = 0.0
+        self._thermal_generation = 0
         self._task: asyncio.Task | None = None
         self._stop_requested = False
         self._reported_status: str | None = None
@@ -243,6 +253,7 @@ class CameraWorker:
 
             self._last_frame_at = now
             frames_in_window += 1
+            due_to_publish = now - last_publish_at >= publish_interval
 
             # Preview cache updates on every captured frame for a smooth live view.
             ok, encoded = cv2.imencode(
@@ -251,12 +262,20 @@ class CameraWorker:
             if ok:
                 jpeg_bytes = encoded.tobytes()
                 await frame_cache.set(self._cache_key, jpeg_bytes)
-                if self.derive_thermal:
-                    thermal_ok, thermal_encoded = cv2.imencode(
-                        ".jpg", simulate_thermal(frame), [cv2.IMWRITE_JPEG_QUALITY, self._settings.jpeg_quality]
-                    )
-                    if thermal_ok:
-                        await frame_cache.set(self._thermal_cache_key, thermal_encoded.tobytes())
+                if self._thermal_sim is not None:
+                    if source.loop_generation != self._thermal_generation:
+                        # A looping file restarted -- a new scene, so forget the old background.
+                        self._thermal_generation = source.loop_generation
+                        self._thermal_sim.reset()
+                    if due_to_publish or now - self._thermal_rendered_at >= _THERMAL_MIN_INTERVAL:
+                        thermal_ok, thermal_encoded = cv2.imencode(
+                            ".jpg", self._thermal_sim.render(frame, now),
+                            [cv2.IMWRITE_JPEG_QUALITY, self._settings.jpeg_quality],
+                        )
+                        if thermal_ok:
+                            self._thermal_jpeg = thermal_encoded.tobytes()
+                            self._thermal_rendered_at = now
+                            await frame_cache.set(self._thermal_cache_key, self._thermal_jpeg)
                 # Evidence pre-roll: sampled well below capture_fps (see
                 # preroll_sample_interval_seconds), additive alongside the
                 # frame_cache write above -- doesn't touch the live preview.
@@ -267,10 +286,11 @@ class CameraWorker:
                     self._last_preroll_push_at = now
 
             # Downsample to inference_fps for the Redis Stream (SAS §5.2 input).
-            if now - last_publish_at >= publish_interval:
+            if due_to_publish:
                 await self._publisher.publish(
                     self.camera_id, frame, loop_generation=source.loop_generation, modality=self._modality,
                     derived_thermal=self.derive_thermal,
+                    thermal_jpeg=self._thermal_jpeg if self.derive_thermal else None,
                 )
                 last_publish_at = now
                 if source.loop_generation != persisted_generation:

@@ -66,7 +66,8 @@ async def list_events(
         date_from=date_from, date_to=date_to, has_recording=has_recording, page=page, page_size=page_size,
     )
     return EventListResponse(
-        items=[to_event_read(row, settings) for row in rows], total=total, page=page, page_size=page_size
+        items=[to_event_read(row, settings, subject=_user.username) for row in rows],
+        total=total, page=page, page_size=page_size,
     )
 
 
@@ -104,7 +105,7 @@ async def get_event(
     event = await EventRepository(session).get_by_id(event_id)
     if event is None:
         raise NotFoundError(f"No event with id {event_id}")
-    return to_event_detail(event, settings)
+    return to_event_detail(event, settings, subject=_user.username)
 
 
 @router.patch("/{event_id}", response_model=EventDetail)

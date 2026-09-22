@@ -16,6 +16,7 @@ dependencies = [
     "bcrypt<4.1",
     "pyjwt>=2.8",
     "structlog>=24.1",
+    "pyotp>=2.9",
 ]
 
 [tool.uv.sources]

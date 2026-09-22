@@ -23,6 +23,19 @@ class Settings(CommonSettings):
     max_source_upload_size_bytes: int = 2 * 1024 * 1024 * 1024  # 2GB, matches nginx client_max_body_size
     max_recording_upload_size_bytes: int = 200 * 1024 * 1024  # 200MB -- a short post-roll clip
 
+    # M25: independent hash-chained anchor service (see app/services/
+    # ledger_service.py). A URL, not a hard requirement -- every call
+    # through it degrades gracefully if unreachable.
+    ledger_service_url: str = "http://ledger-service:8000"
+    ledger_request_timeout_seconds: float = 3.0
+
+    # M25 anomaly detection: reports an unusual burst of evidence downloads/
+    # verifies through event-alert-service's existing internal event
+    # contract (doc08 §4) -- see app/services/anomaly_service.py.
+    event_alert_service_url: str = "http://event-alert-service:8000"
+    anomaly_window_seconds: int = 60
+    anomaly_burst_threshold: int = 10
+
 
 @lru_cache
 def get_settings() -> Settings:

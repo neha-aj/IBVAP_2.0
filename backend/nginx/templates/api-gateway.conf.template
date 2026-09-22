@@ -57,13 +57,39 @@ server {
     # which also live under `/media/snapshots/...` (nginx's static alias,
     # in place since M2's camera-video-upload feature). Resolved with a
     # regex location: a UUID-shaped last segment (optionally followed by
-    # `/file`, recordings' byte-serving sub-route) is the API lookup-by-id,
-    # proxied to media-service; everything else (real file paths are
+    # `/file`, recordings' byte-serving sub-route, or `/verify`, the M25
+    # tamper-evidence check) is the API lookup-by-id, proxied to
+    # media-service; everything else (real file paths are
     # `/media/snapshots/{cameraId}/{date}/{file}.jpg` -- cameraId is never
     # UUID-shaped) falls through to the static alias below. Regex locations
     # take precedence over prefix locations regardless of declaration order,
     # so this is safe however the file below is edited.
+    # Regex locations are tried in file order and the first match wins --
+    # this one (rate-limited) must come before the general media location
+    # below so a `/verify` request matches it instead of falling through.
+    location ~ "^/media/(snapshots|recordings)/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/verify$" {
+        include /etc/nginx/conf.d/cors-snippet;
+        limit_req zone=media_verify burst=10 nodelay;
+        set $media_upstream media-service:8000;
+        proxy_pass http://$media_upstream$request_uri;
+    }
+
     location ~ "^/media/(snapshots|recordings)/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(/file)?$" {
+        # This route (`/file`, `/{id}` GET) is the first place other than
+        # `/verify` above the frontend hits via a cross-origin request --
+        # `<video src>`/`<a href>` don't need CORS, but keeping it here too
+        # is harmless (CORS headers are simply ignored by those).
+        include /etc/nginx/conf.d/cors-snippet;
+        set $media_upstream media-service:8000;
+        proxy_pass http://$media_upstream$request_uri;
+    }
+
+    # M25 chain-of-custody: admin-only, JWT-`Authorization`-gated (not a
+    # `?token=` resource route like the two locations above), so plain
+    # prefix matching is enough -- nothing under here is a real on-disk file
+    # path the static alias below needs to catch instead.
+    location /media/audit-log/ {
+        include /etc/nginx/conf.d/cors-snippet;
         set $media_upstream media-service:8000;
         proxy_pass http://$media_upstream$request_uri;
     }
@@ -88,6 +114,11 @@ server {
     location = /health/media {
         set $media_upstream media-service:8000;
         proxy_pass http://$media_upstream/health;
+    }
+
+    location = /health/ledger {
+        set $ledger_upstream ledger-service:8000;
+        proxy_pass http://$ledger_upstream/health;
     }
 
     # --- Camera Management Service (M2) ---

@@ -26,4 +26,8 @@ class Recording(Base):
     start_time: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_time: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    # M25 tamper-evidence -- same fields, same rationale as Snapshot's own.
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    signature: Mapped[str | None] = mapped_column(String, nullable=True)
+    key_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
