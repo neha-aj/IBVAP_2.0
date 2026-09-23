@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import DashboardLayout from "../layouts/DashboardLayout";
 import ProtectedRoute from "./ProtectedRoute";
+import AdminRoute from "./AdminRoute";
 import Login from "../pages/Login";
 import Dashboard from "../pages/Dashboard";
 import Surveillance from "../pages/Surveillance";
@@ -27,7 +28,7 @@ export default function AppRoutes() {
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={page(Dashboard)} />
         <Route path="/surveillance" element={page(Surveillance)} />
-        <Route path="/cameras" element={page(Cameras)} />
+        <Route path="/cameras" element={<AdminRoute>{page(Cameras)}</AdminRoute>} />
         <Route path="/alerts" element={page(Alerts)} />
         <Route path="/events" element={page(Events)} />
         <Route path="/evidence" element={page(Evidence)} />

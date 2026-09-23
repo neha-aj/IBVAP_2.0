@@ -15,7 +15,12 @@ export const authService = {
 
   async logout() {
     try {
-      await api.post("/auth/logout");
+      // The backend revokes by refresh token, so it has to be sent -- an
+      // empty body always 422'd here before, silently (nothing awaited
+      // this call's rejection), leaving the token un-revoked server-side
+      // even though the client forgot it anyway.
+      const refreshToken = tokenStorage.getRefreshToken();
+      if (refreshToken) await api.post("/auth/logout", { refreshToken });
     } finally {
       tokenStorage.clear();
     }

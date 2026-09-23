@@ -3,11 +3,28 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ShieldCheck } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 
+// Which portal a login is expected to belong to. There's no separate
+// backend concept of "admin login" vs "user login" -- every account
+// already carries its own role (admin/operator/viewer), checked server-
+// side on every request regardless of this page. This selector exists so
+// a login that succeeds with the *wrong kind* of account (e.g. the shared
+// viewer account entered on the Admin tab) is caught here instead of
+// silently granting whatever access that account actually has.
+const PORTALS = [
+  { key: "admin", label: "Admin", placeholder: "admin" },
+  { key: "user", label: "User", placeholder: "user" },
+];
+
+function portalForRole(role) {
+  return role === "admin" ? "admin" : "user";
+}
+
 export default function Login() {
-  const { login } = useAuth();
+  const { login, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
+  const [portal, setPortal] = useState("admin");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
@@ -18,12 +35,32 @@ export default function Login() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  function switchPortal(nextPortal) {
+    setPortal(nextPortal);
+    setNeedsMfa(false);
+    setTotpCode("");
+    setError("");
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     setSubmitting(true);
     try {
-      await login(username, password, needsMfa ? totpCode : undefined);
+      const loggedInUser = await login(username, password, needsMfa ? totpCode : undefined);
+      if (portalForRole(loggedInUser.role) !== portal) {
+        // Right credentials, wrong tab -- undo the login rather than
+        // leaving them signed in under a portal that doesn't match what
+        // they asked for. The revoke-on-server-side part of logout() is a
+        // courtesy, not what makes this safe: swallow its own failure so
+        // it can never mask the message below with an unrelated error.
+        await logout().catch(() => {});
+        const otherPortal = PORTALS.find((p) => p.key !== portal);
+        setError(`That's a ${otherPortal.label} account. Switch to the ${otherPortal.label} tab to sign in.`);
+        setNeedsMfa(false);
+        setTotpCode("");
+        return;
+      }
       const redirectTo = location.state?.from?.pathname || "/";
       navigate(redirectTo, { replace: true });
     } catch (err) {
@@ -54,6 +91,22 @@ export default function Login() {
         <form onSubmit={handleSubmit} className="panel p-5">
           <p className="eyebrow">Sign in</p>
 
+          <div className="mt-3 flex border border-line bg-panelSecondary p-1">
+            {PORTALS.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                disabled={needsMfa}
+                onClick={() => switchPortal(p.key)}
+                className={`flex-1 px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+                  portal === p.key ? "bg-info/10 text-info" : "text-muted hover:text-secondary"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
           <div className="mt-4 space-y-3">
             <label className="block text-xs text-secondary">
               Username
@@ -63,7 +116,7 @@ export default function Login() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="mt-1 w-full border border-line bg-panelSecondary px-3 py-2 text-xs text-primary outline-none placeholder:text-muted focus:border-info disabled:opacity-50"
-                placeholder="admin"
+                placeholder={PORTALS.find((p) => p.key === portal).placeholder}
                 autoComplete="username"
               />
             </label>
