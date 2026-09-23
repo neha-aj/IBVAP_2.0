@@ -1,34 +1,36 @@
 import { api } from "./api";
-import { tokenStorage } from "../utils/tokenStorage";
+import { accessToken } from "../utils/accessToken";
 
 export const authService = {
   // M25 MFA: `totpCode` is omitted entirely for an account that hasn't
   // enabled MFA (the backend field is optional/ignored in that case) --
   // this call shape is unchanged for every existing caller that doesn't
   // pass one.
+  //
+  // M25 hardening: the backend no longer returns a refresh token in this
+  // response at all -- it sets it as an httpOnly cookie instead (api.js's
+  // `credentials: "include"` is what lets the browser receive/send it).
+  // Only the access token is ours to hold, and only in memory.
   async login(username, password, totpCode) {
     const body = totpCode ? { username, password, totpCode } : { username, password };
     const data = await api.post("/auth/login", body);
-    tokenStorage.setTokens({ accessToken: data.accessToken, refreshToken: data.refreshToken });
+    accessToken.set(data.accessToken);
     return data.user;
   },
 
   async logout() {
     try {
-      // The backend revokes by refresh token, so it has to be sent -- an
-      // empty body always 422'd here before, silently (nothing awaited
-      // this call's rejection), leaving the token un-revoked server-side
-      // even though the client forgot it anyway.
-      const refreshToken = tokenStorage.getRefreshToken();
-      if (refreshToken) await api.post("/auth/logout", { refreshToken });
+      // No body needed -- the backend reads/revokes the refresh token from
+      // the httpOnly cookie itself (sent automatically) and clears it.
+      await api.post("/auth/logout");
     } finally {
-      tokenStorage.clear();
+      accessToken.clear();
     }
   },
 
   me: () => api.get("/auth/me"),
 
-  isAuthenticated: () => Boolean(tokenStorage.getAccessToken()),
+  isAuthenticated: () => Boolean(accessToken.get()),
 
   // M25 MFA management -- called from Settings, not the login form.
   mfa: {

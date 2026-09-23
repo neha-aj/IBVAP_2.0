@@ -1,4 +1,4 @@
-import { tokenStorage } from "../utils/tokenStorage";
+import { accessToken } from "../utils/accessToken";
 
 // See api.js's BASE_URL comment: "127.0.0.1", not "localhost", to avoid the
 // IPv6 black-hole this Docker Desktop setup hits on "localhost".
@@ -38,7 +38,7 @@ class RealtimeSocket {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
-    const token = tokenStorage.getAccessToken();
+    const token = accessToken.get();
     if (!token) return; // not logged in yet -- callers retry after login
 
     this.intentionallyClosed = false;

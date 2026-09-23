@@ -1,13 +1,14 @@
 import { createContext, useCallback, useEffect, useState } from "react";
 import { authService } from "../services/authService";
-import { tokenStorage } from "../utils/tokenStorage";
+import { accessToken } from "../utils/accessToken";
 import { socket } from "../services/socket";
+import { refreshAccessToken } from "../services/api";
 
 export const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  // "loading" while we validate a persisted token on first load, so
+  // "loading" while a fresh page load tries to restore a session, so
   // ProtectedRoute doesn't flash a redirect to /login before that check
   // resolves.
   const [status, setStatus] = useState("loading");
@@ -15,19 +16,26 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let cancelled = false;
 
+    // M25 hardening: the access token lives only in memory now, so it's
+    // always gone after a reload -- there's nothing to "check" the way a
+    // localStorage read used to work. Instead, try a silent refresh: if
+    // the browser still has a valid httpOnly refresh cookie from a past
+    // login, this mints a fresh access token from it with no user-visible
+    // prompt; if there's no cookie (or it's expired/revoked), this 401s
+    // and the user just sees the login page, same end result as before.
+    //
+    // Goes through api.js's own de-duplicated `refreshAccessToken` (not a
+    // raw fetch) so React's dev-mode double effect invocation can't fire
+    // two real concurrent refreshes against a cookie that rotates on use.
     async function restoreSession() {
-      if (!tokenStorage.getAccessToken()) {
-        setStatus("unauthenticated");
-        return;
-      }
       try {
-        const me = await authService.me();
+        const data = await refreshAccessToken();
         if (cancelled) return;
-        setUser(me);
+        setUser(data.user);
         setStatus("authenticated");
       } catch {
         if (cancelled) return;
-        tokenStorage.clear();
+        accessToken.clear();
         setStatus("unauthenticated");
       }
     }

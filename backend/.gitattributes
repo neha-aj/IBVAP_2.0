@@ -1,0 +1,4 @@
+# Shell scripts run inside Linux containers (via `sh script.sh`) -- a CRLF
+# line ending in the shebang/body can break execution. Force LF regardless
+# of the checking-out machine's platform or core.autocrlf setting.
+*.sh text eol=lf

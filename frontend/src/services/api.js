@@ -1,4 +1,4 @@
-import { tokenStorage } from "../utils/tokenStorage";
+import { accessToken } from "../utils/accessToken";
 
 // "127.0.0.1", not "localhost" -- on this Docker Desktop setup, nginx's
 // published port only ever binds an IPv4 socket, but browsers (and curl)
@@ -65,21 +65,28 @@ let refreshInFlight = null;
 
 // One-shot, de-duplicated token refresh: several requests failing with 401
 // at once (e.g. a page that fires multiple GETs on mount) must not each
-// trigger their own /auth/refresh call.
-async function refreshAccessToken() {
+// trigger their own /auth/refresh call -- and, since the refresh cookie is
+// rotated server-side on every use (the old one is revoked the instant a
+// new one is issued), a second concurrent call against the same pre-
+// rotation cookie would otherwise 401 for real. AuthContext's startup
+// restore also goes through this (not a separate raw fetch) for exactly
+// that reason -- React's dev-mode double effect invocation would
+// otherwise fire two real concurrent /auth/refresh calls.
+//
+// M25 hardening: no request body -- the refresh token lives only in an
+// httpOnly cookie now (never readable by this code), sent automatically
+// by the browser because of `credentials: "include"` below.
+export async function refreshAccessToken() {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
-      const refreshToken = tokenStorage.getRefreshToken();
-      if (!refreshToken) throw new Error("No refresh token");
       const response = await fetch(`${BASE_URL}/auth/refresh`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken }),
+        credentials: "include",
       });
       if (!response.ok) throw new Error("Refresh failed");
       const data = await response.json();
-      tokenStorage.setTokens({ accessToken: data.accessToken, refreshToken: data.refreshToken });
-      return data.accessToken;
+      accessToken.set(data.accessToken);
+      return data;
     })().finally(() => {
       refreshInFlight = null;
     });
@@ -96,12 +103,18 @@ async function request(method, path, { params, body, isFormData = false, retry =
   // FormData (file upload) must NOT get a manual Content-Type -- the
   // browser sets one itself with the correct multipart boundary.
   if (!isFormData) headers["Content-Type"] = "application/json";
-  const accessToken = tokenStorage.getAccessToken();
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const token = accessToken.get();
+  if (token) headers.Authorization = `Bearer ${token}`;
 
   const response = await fetch(buildUrl(path, params), {
     method,
     headers,
+    // M25: harmless for every non-auth path -- the refresh cookie is
+    // scoped (Path=/api/v1/auth on the backend) so it's simply never
+    // attached anywhere else, credentials:"include" or not. Included
+    // unconditionally so /auth/login and /auth/logout (which go through
+    // this same function) don't need special-casing.
+    credentials: "include",
     body: isFormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
   });
 
@@ -110,7 +123,7 @@ async function request(method, path, { params, body, isFormData = false, retry =
       await refreshAccessToken();
       return request(method, path, { params, body, isFormData, retry: false });
     } catch {
-      tokenStorage.clear();
+      accessToken.clear();
       // AuthContext listens for this to clear its state and redirect to
       // /login -- api.js can't import the context directly without a
       // circular dependency (the context itself calls this client).

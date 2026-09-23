@@ -1,5 +1,15 @@
 server {
     listen 80;
+    # M25 hardening: additive TLS listener, same server block (so every
+    # location below applies to both -- no risk of the two drifting apart).
+    # Self-signed and auto-generated at container start (see
+    # docker-entrypoint-wrapper.sh) -- browsers will warn on first visit
+    # until it's replaced with a real certificate for an actual deployment;
+    # :80 is left listening too, so nothing that already works over plain
+    # HTTP stops working.
+    listen 443 ssl;
+    ssl_certificate     /etc/nginx/certs/ibvap.crt;
+    ssl_certificate_key /etc/nginx/certs/ibvap.key;
     server_name _;
     client_max_body_size 2G;   # allow large video-file uploads for `file`-type cameras
 

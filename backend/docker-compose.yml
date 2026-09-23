@@ -23,6 +23,7 @@ volumes:
   redis-data:
   media-data:
   ledger-data:
+  nginx-certs:
   detection-models:
   prometheus-data:
   grafana-data:
@@ -44,7 +45,12 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "5432:5432"
+      # Bound to loopback only -- every service reaches postgres over the
+      # internal ibvap-internal network by hostname, not this host-mapped
+      # port; this only exists for a local DB client (pgAdmin, psql) on
+      # this machine. 127.0.0.1: keeps that working while making the port
+      # unreachable from the network/another machine.
+      - "127.0.0.1:5432:5432"
     networks: [ibvap-internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
@@ -58,7 +64,8 @@ services:
     volumes:
       - redis-data:/data
     ports:
-      - "6379:6379"
+      # Same reasoning as postgres above -- loopback-only.
+      - "127.0.0.1:6379:6379"
     networks: [ibvap-internal]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -483,8 +490,23 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    # M25 hardening: generates a self-signed TLS cert (if one isn't already
+    # in the persisted nginx-certs volume) before handing off to the
+    # image's own normal entrypoint, which still does its usual envsubst-
+    # on-templates step and starts nginx exactly as before. Invoked via
+    # `sh` explicitly rather than relying on the executable bit, since a
+    # Windows bind mount doesn't reliably preserve it.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sh /entrypoint-extra/generate-certs.sh && exec /docker-entrypoint.sh nginx -g 'daemon off;'
     environment:
-      - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-http://localhost:5173}
+      # M25: "127.0.0.1", not "localhost" -- the refresh cookie's SameSite=Lax
+      # policy treats them as different sites (no shared eTLD+1), which
+      # silently drops the cookie on a cross-origin fetch/XHR even though a
+      # plain page load wouldn't notice. Frontend and API must be reached via
+      # the same hostname for the cookie to actually be sent back.
+      - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-http://127.0.0.1:5173}
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       # conf.d itself is generated at container start by nginx's own
@@ -492,9 +514,12 @@ services:
       # /etc/nginx/conf.d) -- this lets CORS_ALLOWED_ORIGIN above reach the
       # config without hardcoding it, unlike the old direct conf.d:ro mount.
       - ./nginx/templates:/etc/nginx/templates:ro
+      - ./nginx/entrypoint-extra:/entrypoint-extra:ro
+      - nginx-certs:/etc/nginx/certs
       - media-data:/data/media:ro
     ports:
       - "8080:80"
+      - "8443:443"
     depends_on:
       - auth-service
       - camera-service
