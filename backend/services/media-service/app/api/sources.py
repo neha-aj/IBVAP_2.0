@@ -16,6 +16,7 @@ from ibvap_common.internal_auth import verify_internal_token
 
 from app.core.config import Settings, get_settings
 from app.schemas.source import SourceStored
+from app.security.file_signatures import looks_like_video
 from app.storage.local_backend import LocalStorageBackend
 
 router = APIRouter(
@@ -34,6 +35,11 @@ async def store_source(
     data = await file.read()
     if len(data) > settings.max_source_upload_size_bytes:
         raise ApiError(status_code=413, title="File too large")
+    # M2.0 security review follow-up: content-based check (magic bytes),
+    # not filename/Content-Type, so a renamed/relabeled non-video upload
+    # is rejected before ever reaching disk or ingestion-service's decoder.
+    if not looks_like_video(data):
+        raise ApiError(status_code=415, title="Unsupported media type", detail="File does not look like a video")
 
     # No `url_prefix` -- returns the raw filesystem path (see
     # `LocalStorageBackend`'s own docstring for why this one case differs

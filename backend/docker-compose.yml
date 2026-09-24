@@ -78,6 +78,12 @@ services:
       context: .
       dockerfile: services/auth-service/Dockerfile
     restart: unless-stopped
+    # M2.0 security review follow-up: app containers already run as a
+    # non-root USER (Dockerfile); dropping all Linux capabilities and
+    # blocking privilege escalation is a standard, low-risk extra layer --
+    # these are plain Python services with no need for any capability.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: auth-service
@@ -101,6 +107,8 @@ services:
       context: .
       dockerfile: services/camera-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: camera-service
@@ -126,6 +134,8 @@ services:
       context: .
       dockerfile: services/ingestion-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: ingestion-service
@@ -152,6 +162,8 @@ services:
       context: .
       dockerfile: services/detection-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: detection-service
@@ -180,6 +192,8 @@ services:
       context: .
       dockerfile: services/tracking-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: tracking-service
@@ -203,6 +217,8 @@ services:
       context: .
       dockerfile: services/event-alert-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: event-alert-service
@@ -233,6 +249,8 @@ services:
       context: .
       dockerfile: services/anpr-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: anpr-service
@@ -264,6 +282,8 @@ services:
       context: .
       dockerfile: services/reid-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: reid-service
@@ -295,6 +315,8 @@ services:
       context: .
       dockerfile: services/fire-smoke-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: fire-smoke-service
@@ -321,6 +343,8 @@ services:
       context: .
       dockerfile: services/pose-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: pose-service
@@ -344,6 +368,8 @@ services:
       context: .
       dockerfile: services/tamper-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: tamper-service
@@ -370,6 +396,8 @@ services:
       context: .
       dockerfile: services/ppe-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: ppe-service
@@ -399,6 +427,8 @@ services:
       context: .
       dockerfile: services/media-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: media-service
@@ -425,6 +455,8 @@ services:
       context: .
       dockerfile: services/ledger-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: ledger-service
@@ -446,6 +478,8 @@ services:
       context: .
       dockerfile: services/realtime-gateway/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: realtime-gateway
@@ -464,6 +498,8 @@ services:
       context: .
       dockerfile: services/analytics-service/Dockerfile
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     environment:
       <<: *common-env
       SERVICE_NAME: analytics-service

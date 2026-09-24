@@ -302,6 +302,13 @@ server {
     # preflight, and `if`-based header blocks would risk interfering with
     # the Upgrade response.
     location /ws {
+        # M2.0 security review follow-up: the WS handshake carries the
+        # access JWT in its query string (?token=...) -- nginx's default
+        # access_log otherwise writes that full URI, token included, to
+        # disk on every connect/reconnect. Access tokens are already
+        # short-lived (15min); this closes the log-exposure side of that
+        # finding without changing the handshake itself.
+        access_log off;
         set $realtime_upstream realtime-gateway:8000;
         proxy_pass http://$realtime_upstream$request_uri;
         proxy_http_version 1.1;
