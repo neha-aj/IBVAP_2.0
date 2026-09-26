@@ -145,6 +145,21 @@ async def test_loitering_fires_once_after_threshold() -> None:
 
 
 @pytest.mark.asyncio
+async def test_loitering_never_fires_for_a_stationary_vehicle() -> None:
+    engine = RuleEngine(_settings(), _no_zones)
+    repo = FakeTrackRepo()
+    start_time = dt.datetime.now(dt.UTC)
+    await engine.handle_track_event(_track_event("track.started", "1", object_type="vehicle"), repo, start_time)
+
+    drafts = []
+    for seconds in range(5, 32, 5):
+        drafts += await engine.handle_track_event(
+            _track_event("track.updated", "1", object_type="vehicle"), repo, start_time + dt.timedelta(seconds=seconds)
+        )
+    assert not any(d.event_type == "Loitering Detected" for d in drafts)
+
+
+@pytest.mark.asyncio
 async def test_zone_entry_fires_once_then_not_again_until_re_entry() -> None:
     zone = Zone(
         id="zone-1", name="Perimeter", zone_type="perimeter",

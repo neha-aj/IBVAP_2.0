@@ -221,7 +221,14 @@ class RuleEngine:
             if track is not None:
                 await track_repo.touch(track, now)
                 key = (event.camera_id, resolved_ref)
-                if key not in self._loitering_fired and loitering.has_exceeded_dwell_time(
+                # Loitering is specifically about a *person* standing around
+                # too long -- a parked vehicle or a stationary animal
+                # dwelling in frame isn't the same concern, and used to
+                # trigger the same alert before this check existed. A
+                # stationary bag has its own, separate, more specific rule
+                # below (Abandoned Object), so it's excluded here too rather
+                # than double-firing under two different event types.
+                if event.object_type == "person" and key not in self._loitering_fired and loitering.has_exceeded_dwell_time(
                     self._dwell_start(key, track.first_seen), now,
                     threshold_seconds=self._settings.loitering_seconds_threshold
                 ):
@@ -232,7 +239,7 @@ class RuleEngine:
                             event_type="Loitering Detected",
                             object_type=event.object_type,
                             severity="medium",
-                            description=f"Object present for over {self._settings.loitering_seconds_threshold}s",
+                            description=f"Person present for over {self._settings.loitering_seconds_threshold}s",
                             requires_review=True,
                         )
                     )
