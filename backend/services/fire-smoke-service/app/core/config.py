@@ -72,6 +72,20 @@ class Settings(CommonSettings):
     # forever.
     alert_cooldown_seconds: float = 60.0
 
+    # --- Trained fire/smoke model (app/inference/yolo_scorer.py) ---
+    # Off by default: only flip once models/fire_smoke_best.pt actually
+    # exists and has been verified live -- a missing file degrades
+    # gracefully to the heuristic path either way (see yolo_scorer.py's
+    # load_if_enabled), so this flag is really about not paying the
+    # ultralytics/torch import cost on a deployment that hasn't opted in.
+    use_trained_fire_smoke_model: bool = False
+    fire_smoke_model_path: str = "/srv/custom-models/fire_smoke_best.pt"
+    # 0.4: the confidence threshold this model was validated at during
+    # training (see the Colab notebook's Part 3 test cell), not re-derived
+    # here -- re-tune against this deployment's own real camera feeds the
+    # same way fire_min_area_fraction above was, if needed.
+    fire_smoke_model_confidence_threshold: float = 0.4
+
 
 @lru_cache
 def get_settings() -> Settings:

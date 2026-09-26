@@ -116,6 +116,7 @@ export default function CameraViewerModal({
                 poses={showingThermal ? [] : poses}
                 streamUrl={showingThermal ? thermalStreamUrl : streamUrl}
                 paused={paused}
+                allowLocalFreeze
               />
             </ZoomPanViewport>
           </div>

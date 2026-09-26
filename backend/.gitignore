@@ -11,3 +11,9 @@ build/
 venv/
 data/media/
 postgres-data/
+
+# Trained model weights: large binary artifacts, not source code -- kept
+# out of git the same way .env is. Bind-mounted into fire-smoke-service and
+# anpr-service by docker-compose.yml; see models/README.md for how to
+# (re)populate this folder on a fresh checkout.
+models/*.pt

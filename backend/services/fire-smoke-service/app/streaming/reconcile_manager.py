@@ -15,6 +15,7 @@ from ibvap_common.logging import get_logger
 from ibvap_common.redis_streams import build_redis_client
 
 from app.core.config import Settings
+from app.inference import yolo_scorer
 from app.services.fire_smoke_service import FireSmokeService
 from app.streaming.camera_client import CameraClient
 from app.streaming.event_client import EventClient
@@ -33,6 +34,18 @@ class ReconcileManager:
         self._event_client = EventClient(self._http, settings)
         self._poll_task: asyncio.Task | None = None
         self._stopped = False
+        # One shared model instance for every camera's FireSmokeService
+        # (see yolo_scorer.py) -- None if disabled or the weights file
+        # couldn't be loaded, in which case every camera below falls back
+        # to the original heuristics.
+        self._trained_scorer = (
+            yolo_scorer.load_if_enabled(
+                model_path=settings.fire_smoke_model_path,
+                confidence_threshold=settings.fire_smoke_model_confidence_threshold,
+            )
+            if settings.use_trained_fire_smoke_model
+            else None
+        )
 
     @property
     def active_consumer_count(self) -> int:
@@ -79,8 +92,19 @@ class ReconcileManager:
 
             # One FireSmokeService instance per camera -- each holds its own
             # per-event-type cooldown state, so a camera with a stuck fire
-            # alert doesn't affect any other camera's cooldown clock.
-            fire_smoke_service = FireSmokeService(settings=self._settings, event_client=self._event_client)
+            # alert doesn't affect any other camera's cooldown clock. Only
+            # fire/smoke swap to the trained model when available; blood
+            # has no trained equivalent and always uses the heuristic.
+            fire_smoke_service = (
+                FireSmokeService(
+                    settings=self._settings,
+                    event_client=self._event_client,
+                    fire_score=self._trained_scorer.fire_score,
+                    smoke_score=self._trained_scorer.smoke_score,
+                )
+                if self._trained_scorer is not None
+                else FireSmokeService(settings=self._settings, event_client=self._event_client)
+            )
             consumer = FrameConsumer(
                 camera_id=camera_id,
                 redis_client=self._redis,

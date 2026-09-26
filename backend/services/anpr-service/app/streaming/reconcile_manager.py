@@ -14,6 +14,7 @@ from ibvap_common.logging import get_logger
 from ibvap_common.redis_streams import build_redis_client
 
 from app.core.config import Settings
+from app.inference import yolo_plate_detector
 from app.inference.ocr import read_plate_text
 from app.inference.plate_detector import PlateDetector
 from app.repositories.plate_read_repo import PlateReadRepository
@@ -38,6 +39,18 @@ class ReconcileManager:
         self._media_client = MediaClient(self._http, settings)
         self._event_client = EventClient(self._http, settings)
         self._plate_detector = PlateDetector(settings.haar_cascade_name)
+        # None if disabled or the weights file couldn't be loaded, in which
+        # case _build_plate_service below falls back to the cascade -- same
+        # graceful-degradation shape as fire-smoke-service's own trained
+        # model flag.
+        self._trained_plate_detector = (
+            yolo_plate_detector.load_if_enabled(
+                model_path=settings.plate_model_path,
+                confidence_threshold=settings.plate_model_confidence_threshold,
+            )
+            if settings.use_trained_plate_model
+            else None
+        )
         self._poll_task: asyncio.Task | None = None
         self._stopped = False
 
@@ -53,7 +66,12 @@ class ReconcileManager:
             camera_client=self._camera_client,
             media_client=self._media_client,
             event_client=self._event_client,
-            detect_plate=self._plate_detector.detect,
+            detect_plate=(
+                self._trained_plate_detector.detect
+                if self._trained_plate_detector is not None
+                else self._plate_detector.detect
+            ),
+            detect_plate_uses_color_crop=self._trained_plate_detector is not None,
             read_plate=lambda crop: read_plate_text(crop, min_confidence=self._settings.min_ocr_confidence),
         )
 

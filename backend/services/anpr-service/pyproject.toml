@@ -19,6 +19,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "structlog>=24.1",
     "prometheus-client>=0.20",
+    "ultralytics>=8.2",
 ]
 
 [tool.uv.sources]

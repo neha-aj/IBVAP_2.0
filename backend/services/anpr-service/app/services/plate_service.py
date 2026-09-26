@@ -46,6 +46,7 @@ class PlateService:
         event_client: EventClient,
         detect_plate: DetectPlateFn,
         read_plate: ReadPlateFn,
+        detect_plate_uses_color_crop: bool = False,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
         self._settings = settings
@@ -56,6 +57,12 @@ class PlateService:
         self._event_client = event_client
         self._detect_plate = detect_plate
         self._read_plate = read_plate
+        # False (default): the original Haar-cascade/edge-density detector,
+        # unchanged, still gets exactly the grayscale-normalized crop it
+        # was verified against. True: the trained YOLO detector (see
+        # yolo_plate_detector.py) gets the color crop instead, since it was
+        # fine-tuned on color images -- its own module docstring covers why.
+        self._detect_plate_uses_color_crop = detect_plate_uses_color_crop
         self._now = now
         # (camera_id, plate_text) -> last time this exact plate was
         # persisted on this camera (see Settings.plate_read_cooldown_seconds
@@ -82,7 +89,7 @@ class PlateService:
         crop = preprocessing.upscale_if_small(crop, min_height_px=self._settings.min_plate_crop_height_px)
         gray = preprocessing.normalize_for_ocr(crop)
 
-        plate_region = self._detect_plate(gray)
+        plate_region = self._detect_plate(crop if self._detect_plate_uses_color_crop else gray)
         if plate_region is None:
             return None
         x, y, w, h = plate_region

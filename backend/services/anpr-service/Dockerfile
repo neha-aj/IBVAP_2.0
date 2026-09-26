@@ -23,11 +23,26 @@ COPY services/anpr-service/app /srv/app
 COPY services/anpr-service/alembic /srv/alembic
 COPY services/anpr-service/alembic.ini /srv/alembic.ini
 
-RUN pip install --no-cache-dir \
+# Same CPU-only torch install as detection-service's own Dockerfile (see
+# its comment for why). Adds ultralytics/torch to this image -- the trained
+# plate detector in app/inference/yolo_plate_detector.py, used when
+# USE_TRAINED_PLATE_MODEL=true; the Haar-cascade/edge-density path (and
+# Tesseract OCR either way) stays exactly as before.
+RUN pip install --no-cache-dir --timeout 120 --retries 5 torch torchvision \
+    --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir --timeout 120 --retries 5 \
     fastapi>=0.111 "uvicorn[standard]>=0.30" "sqlalchemy[asyncio]>=2.0" \
     asyncpg>=0.29 alembic>=1.13 redis>=5.0 httpx>=0.27 numpy>=1.26 \
     "opencv-python-headless>=4.10,<5" pytesseract>=0.3.10 pydantic>=2.7 \
-    pydantic-settings>=2.3 structlog>=24.1 prometheus-client>=0.20
+    pydantic-settings>=2.3 structlog>=24.1 prometheus-client>=0.20 ultralytics>=8.2
+
+# ultralytics pulls in plain `opencv-python` (GUI build) as its own
+# transitive dependency -- a different PyPI distribution than
+# opencv-python-headless above, but both install into the same on-disk
+# `cv2` package, so whichever installs last silently corrupts the other's
+# files. Live-broke `cv2.CascadeClassifier` (this service's Haar-cascade
+# fallback) at container startup. Force headless back in as the last word.
+RUN pip install --no-cache-dir --force-reinstall --no-deps "opencv-python-headless>=4.10,<5"
 
 RUN useradd --create-home --uid 1000 appuser
 USER appuser

@@ -26,7 +26,7 @@ class Settings(CommonSettings):
     # --- Rule thresholds (Phase 1 rules, SAS §5.4.2) ---
     person_count_threshold: int = 5
     vehicle_count_threshold: int = 3
-    loitering_seconds_threshold: int = 30
+    loitering_seconds_threshold: int = 90  # ~1.5 minutes in the same spot
     offline_alert_enabled: bool = True
 
     # --- Alert threshold (Phase 2 hardening) ---

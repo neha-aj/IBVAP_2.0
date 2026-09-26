@@ -28,6 +28,17 @@ class Settings(CommonSettings):
     # pairing as the appropriate "offline/embedded... no GPU" fallback, not
     # a shortcut invented here. See Dockerfile's own comment.
     haar_cascade_name: str = "haarcascade_russian_plate_number.xml"
+
+    # --- Trained plate detector (app/inference/yolo_plate_detector.py) ---
+    # Off by default: only flip once models/license_plate_best.pt actually
+    # exists and has been verified live -- a missing file degrades
+    # gracefully to the Haar-cascade/edge-density path either way (see
+    # yolo_plate_detector.py's load_if_enabled).
+    use_trained_plate_model: bool = False
+    plate_model_path: str = "/srv/custom-models/license_plate_best.pt"
+    # 0.4: the confidence threshold this model was validated at during
+    # training (see the Colab notebook's Part 3 test cell).
+    plate_model_confidence_threshold: float = 0.4
     min_plate_crop_height_px: int = 64  # doc09 §2.1: upscale if crop height < 64px
     min_ocr_confidence: float = 40.0  # Tesseract's own 0-100 per-word confidence scale
     # Validates OCR output looks plate-shaped at all (letters+digits, sane

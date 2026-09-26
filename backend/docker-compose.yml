@@ -259,6 +259,12 @@ services:
       INGESTION_SERVICE_URL: http://ingestion-service:8000
       MEDIA_SERVICE_URL: http://media-service:8000
       EVENT_ALERT_SERVICE_URL: http://event-alert-service:8000
+      # Colab-trained plate detector (models/README.md) -- graceful
+      # fallback to the Haar cascade if the file below is ever missing.
+      USE_TRAINED_PLATE_MODEL: "true"
+      PLATE_MODEL_PATH: /srv/custom-models/license_plate_best.pt
+    volumes:
+      - ./models/license_plate_best.pt:/srv/custom-models/license_plate_best.pt:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -322,6 +328,14 @@ services:
       SERVICE_NAME: fire-smoke-service
       CAMERA_SERVICE_URL: http://camera-service:8000
       EVENT_ALERT_SERVICE_URL: http://event-alert-service:8000
+      # Colab-trained fire/smoke model (models/README.md) -- graceful
+      # fallback to the color/texture heuristic if the file below is ever
+      # missing. Blood detection has no trained equivalent and is
+      # unaffected either way.
+      USE_TRAINED_FIRE_SMOKE_MODEL: "true"
+      FIRE_SMOKE_MODEL_PATH: /srv/custom-models/fire_smoke_best.pt
+    volumes:
+      - ./models/fire_smoke_best.pt:/srv/custom-models/fire_smoke_best.pt:ro
     depends_on:
       redis:
         condition: service_healthy
